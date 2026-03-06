@@ -18,10 +18,10 @@ local BALL_SIZE = 14
 
 -- Player and AI speeds
 local PADDLE_BASE_SPEED = 380        -- player base speed (pixels/sec)
-local AI_BASE_SPEED = 260            -- bot base speed (pixels/sec) -- reduced for easier bot
-local AI_REACTION_TIME = 0.12        -- seconds between AI target updates (adds slowness)
+local AI_BASE_SPEED = 320            -- bot base speed (pixels/sec) -- reduced for easier bot
+local AI_REACTION_TIME = 0.9         -- seconds between AI target updates (adds slowness)
 local AI_DEADZONE = 22               -- pixels: AI won't correct small offsets inside this zone
-local AI_JITTER = 0.12               -- small inaccuracy multiplier
+local AI_JITTER = 0.9                -- small inaccuracy multiplier
 
 -- Ball speed settings (slower & gentler accel)
 local BALL_INITIAL_SPEED = 320       -- slower initial ball speed
