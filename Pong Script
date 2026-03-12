@@ -93,7 +93,7 @@ local cbStroke = Instance.new("UIStroke", closeBtn); cbStroke.Color = Color3.fro
 local shopToggle = Instance.new("TextButton", screenGui)
 shopToggle.Name = "ShopToggle"
 shopToggle.AnchorPoint = Vector2.new(1, 0)
-shopToggle.Position = UDim2.new(0.5, PLAY_AREA_SIZE.X/2 - 44, 0.5, -PLAY_AREA_SIZE.Y/2)
+shopToggle.Position = UDim2.new(0.5, PLAY_AREA_SIZE.X/2 - 60, 0.5, -PLAY_AREA_SIZE.Y/2)
 shopToggle.Size = UDim2.new(0, 44, 0, 30)
 shopToggle.Text = "Shop"
 shopToggle.Font = Enum.Font.SourceSansBold
