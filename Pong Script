@@ -1,5 +1,9 @@
--- Polished Pong LocalScript (easier bot + slower ball)
+-- Polished Pong LocalScript (easier bot + slower ball) + Shop
 -- Place this LocalScript in StarterPlayer > StarterPlayerScripts
+-- Adds a shop that uses your points (left score) to buy temporary effects:
+--  - Slow Ball (5 pts) : ball global speed x0.75 for 10s
+--  - Enlarge Paddle (7 pts) : your (left) paddle height +30% for 10s
+--  - Shrink Opponent (7 pts) : bot (right) paddle height -25% for 10s
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -18,10 +22,10 @@ local BALL_SIZE = 14
 
 -- Player and AI speeds
 local PADDLE_BASE_SPEED = 380        -- player base speed (pixels/sec)
-local AI_BASE_SPEED = 320            -- bot base speed (pixels/sec) -- reduced for easier bot
-local AI_REACTION_TIME = 0.9         -- seconds between AI target updates (adds slowness)
+local AI_BASE_SPEED = 260            -- bot base speed (pixels/sec) -- reduced for easier bot
+local AI_REACTION_TIME = 0.12        -- seconds between AI target updates (adds slowness)
 local AI_DEADZONE = 22               -- pixels: AI won't correct small offsets inside this zone
-local AI_JITTER = 0.9                -- small inaccuracy multiplier
+local AI_JITTER = 0.12               -- small jitter
 
 -- Ball speed settings (slower & gentler accel)
 local BALL_INITIAL_SPEED = 320       -- slower initial ball speed
@@ -34,6 +38,16 @@ local BOOST_RADIUS = 16              -- pixels radius (visual)
 local BOOST_LIFETIME = 12            -- boosters despawn after this if not collected
 local PING_SOUND_ID = "rbxassetid://12222216"
 
+-- Shop config
+local SHOP_YIELD = { -- shop items
+    { id = "SlowBall", name = "Slow Ball", cost = 5, duration = 10,
+      desc = "Ball speed ×0.75 for 10s", mult = 0.75 },
+    { id = "EnlargePaddle", name = "Enlarge Paddle", cost = 7, duration = 10,
+      desc = "Your paddle +30% height for 10s", scale = 1.30 },
+    { id = "ShrinkOpponent", name = "Shrink Opponent", cost = 7, duration = 10,
+      desc = "Opponent paddle -25% height for 10s", scale = 0.75 },
+}
+
 -- Boost multipliers
 local BOOSTS = {
     SpeedUp = {mult = 1.6, color = Color3.fromRGB(80, 170, 255), text = "Speed Up!"},
@@ -42,7 +56,7 @@ local BOOSTS = {
 
 -- UI Creation
 local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "PongGUI_Polished"
+screenGui.Name = "PongGUI_Polished_Shop"
 screenGui.ResetOnSpawn = false
 screenGui.Parent = playerGui
 
@@ -56,19 +70,9 @@ playFrame.BackgroundColor3 = Color3.fromRGB(18, 20, 28)
 playFrame.BorderSizePixel = 0
 playFrame.ClipsDescendants = true
 
--- Fresh look decorations
-local pfCorner = Instance.new("UICorner", playFrame)
-pfCorner.CornerRadius = UDim.new(0, 10)
-local pfStroke = Instance.new("UIStroke", playFrame)
-pfStroke.Color = Color3.fromRGB(42, 45, 55)
-pfStroke.Transparency = 0.35
-pfStroke.Thickness = 1
-local pfGrad = Instance.new("UIGradient", playFrame)
-pfGrad.Color = ColorSequence.new{
-    ColorSequenceKeypoint.new(0, Color3.fromRGB(20,22,30)),
-    ColorSequenceKeypoint.new(1, Color3.fromRGB(24,26,34))
-}
-pfGrad.Rotation = 90
+local pfCorner = Instance.new("UICorner", playFrame); pfCorner.CornerRadius = UDim.new(0, 10)
+local pfStroke = Instance.new("UIStroke", playFrame); pfStroke.Color = Color3.fromRGB(42,45,55); pfStroke.Transparency = 0.35; pfStroke.Thickness = 1
+local pfGrad = Instance.new("UIGradient", playFrame); pfGrad.Color = ColorSequence.new{ ColorSequenceKeypoint.new(0, Color3.fromRGB(20,22,30)), ColorSequenceKeypoint.new(1, Color3.fromRGB(24,26,34)) }; pfGrad.Rotation = 90
 
 -- Close (X) button
 local closeBtn = Instance.new("TextButton", screenGui)
@@ -82,11 +86,44 @@ closeBtn.TextSize = 20
 closeBtn.TextColor3 = Color3.fromRGB(230,230,230)
 closeBtn.BackgroundColor3 = Color3.fromRGB(40,40,48)
 closeBtn.BorderSizePixel = 0
-local cbCorner = Instance.new("UICorner", closeBtn)
-cbCorner.CornerRadius = UDim.new(0, 6)
-local cbStroke = Instance.new("UIStroke", closeBtn)
-cbStroke.Color = Color3.fromRGB(34,34,40)
-cbStroke.Transparency = 0.5
+local cbCorner = Instance.new("UICorner", closeBtn); cbCorner.CornerRadius = UDim.new(0, 6)
+local cbStroke = Instance.new("UIStroke", closeBtn); cbStroke.Color = Color3.fromRGB(34,34,40); cbStroke.Transparency = 0.5
+
+-- Shop toggle button (left of close)
+local shopToggle = Instance.new("TextButton", screenGui)
+shopToggle.Name = "ShopToggle"
+shopToggle.AnchorPoint = Vector2.new(1, 0)
+shopToggle.Position = UDim2.new(0.5, PLAY_AREA_SIZE.X/2 - 44, 0.5, -PLAY_AREA_SIZE.Y/2)
+shopToggle.Size = UDim2.new(0, 44, 0, 30)
+shopToggle.Text = "Shop"
+shopToggle.Font = Enum.Font.SourceSansBold
+shopToggle.TextSize = 14
+shopToggle.TextColor3 = Color3.fromRGB(230,230,230)
+shopToggle.BackgroundColor3 = Color3.fromRGB(32,34,40)
+shopToggle.BorderSizePixel = 0
+local stCorner = Instance.new("UICorner", shopToggle); stCorner.CornerRadius = UDim.new(0,6)
+
+-- Shop panel (hidden initially)
+local shopPanel = Instance.new("Frame", screenGui)
+shopPanel.Name = "ShopPanel"
+shopPanel.AnchorPoint = Vector2.new(0, 1)
+shopPanel.Position = UDim2.new(0, 12, 0.5, -PLAY_AREA_SIZE.Y/2)
+shopPanel.Size = UDim2.new(0, 240, 0, 140)
+shopPanel.BackgroundColor3 = Color3.fromRGB(22,24,30)
+shopPanel.BorderSizePixel = 0
+shopPanel.Visible = false
+local spCorner = Instance.new("UICorner", shopPanel); spCorner.CornerRadius = UDim.new(0,8)
+local spStroke = Instance.new("UIStroke", shopPanel); spStroke.Color = Color3.fromRGB(36,38,44); spStroke.Transparency = 0.3
+
+local shopTitle = Instance.new("TextLabel", shopPanel)
+shopTitle.Size = UDim2.new(1, -12, 0, 28)
+shopTitle.Position = UDim2.new(0, 6, 0, 6)
+shopTitle.BackgroundTransparency = 1
+shopTitle.Text = "Shop"
+shopTitle.Font = Enum.Font.SourceSansBold
+shopTitle.TextColor3 = Color3.fromRGB(230,230,230)
+shopTitle.TextScaled = true
+shopTitle.TextXAlignment = Enum.TextXAlignment.Left
 
 -- Score labels
 local leftScore = Instance.new("TextLabel", playFrame)
@@ -110,7 +147,7 @@ rightScore.Font = Enum.Font.SourceSansBold
 rightScore.TextScaled = true
 rightScore.Text = "0"
 
--- Center divider (subtle)
+-- Center divider
 local mid = Instance.new("Frame", playFrame)
 mid.Size = UDim2.new(0, 2, 1, 0)
 mid.Position = UDim2.new(0.5, -1, 0, 0)
@@ -125,11 +162,8 @@ leftPaddle.Position = UDim2.new(0, 16, 0.5, -PADDLE_H/2)
 leftPaddle.AnchorPoint = Vector2.new(0, 0)
 leftPaddle.BackgroundColor3 = Color3.fromRGB(240,240,240)
 leftPaddle.BorderSizePixel = 0
-local lpCorner = Instance.new("UICorner", leftPaddle)
-lpCorner.CornerRadius = UDim.new(0, 6)
-local lpStroke = Instance.new("UIStroke", leftPaddle)
-lpStroke.Color = Color3.fromRGB(200,200,200)
-lpStroke.Transparency = 0.6
+local lpCorner = Instance.new("UICorner", leftPaddle); lpCorner.CornerRadius = UDim.new(0, 6)
+local lpStroke = Instance.new("UIStroke", leftPaddle); lpStroke.Color = Color3.fromRGB(200,200,200); lpStroke.Transparency = 0.6
 
 local rightPaddle = Instance.new("Frame", playFrame)
 rightPaddle.Name = "RightPaddle"
@@ -138,11 +172,8 @@ rightPaddle.AnchorPoint = Vector2.new(1, 0)
 rightPaddle.Position = UDim2.new(1, -16, 0.5, -PADDLE_H/2)
 rightPaddle.BackgroundColor3 = Color3.fromRGB(240,240,240)
 rightPaddle.BorderSizePixel = 0
-local rpCorner = Instance.new("UICorner", rightPaddle)
-rpCorner.CornerRadius = UDim.new(0, 6)
-local rpStroke = Instance.new("UIStroke", rightPaddle)
-rpStroke.Color = Color3.fromRGB(200,200,200)
-rpStroke.Transparency = 0.6
+local rpCorner = Instance.new("UICorner", rightPaddle); rpCorner.CornerRadius = UDim.new(0, 6)
+local rpStroke = Instance.new("UIStroke", rightPaddle); rpStroke.Color = Color3.fromRGB(200,200,200); rpStroke.Transparency = 0.6
 
 local ball = Instance.new("Frame", playFrame)
 ball.Name = "Ball"
@@ -151,11 +182,8 @@ ball.AnchorPoint = Vector2.new(0.5, 0.5)
 ball.Position = UDim2.new(0.5, 0, 0.5, 0)
 ball.BackgroundColor3 = Color3.fromRGB(255, 200, 50)
 ball.BorderSizePixel = 0
-local ballCorner = Instance.new("UICorner", ball)
-ballCorner.CornerRadius = UDim.new(1, 0)
-local ballStroke = Instance.new("UIStroke", ball)
-ballStroke.Color = Color3.fromRGB(210,140,30)
-ballStroke.Transparency = 0.5
+local ballCorner = Instance.new("UICorner", ball); ballCorner.CornerRadius = UDim.new(1, 0)
+local ballStroke = Instance.new("UIStroke", ball); ballStroke.Color = Color3.fromRGB(210,140,30); ballStroke.Transparency = 0.5
 
 -- Ping sound
 local pingSound = Instance.new("Sound", screenGui)
@@ -163,7 +191,7 @@ pingSound.Name = "PingSound"
 pingSound.SoundId = PING_SOUND_ID
 pingSound.Volume = 0.85
 
--- Up/Down Buttons (mobile) - smaller polished buttons
+-- Up/Down Buttons (mobile)
 local buttonContainer = Instance.new("Frame", screenGui)
 buttonContainer.Name = "Buttons"
 buttonContainer.Size = UDim2.new(0, 120, 0, 180)
@@ -181,11 +209,8 @@ upBtn.TextScaled = true
 upBtn.BackgroundColor3 = Color3.fromRGB(58, 60, 72)
 upBtn.TextColor3 = Color3.fromRGB(235,235,235)
 upBtn.BorderSizePixel = 0
-local upCorner = Instance.new("UICorner", upBtn)
-upCorner.CornerRadius = UDim.new(0, 8)
-local upStroke = Instance.new("UIStroke", upBtn)
-upStroke.Color = Color3.fromRGB(40,40,46)
-upStroke.Transparency = 0.5
+local upCorner = Instance.new("UICorner", upBtn); upCorner.CornerRadius = UDim.new(0, 8)
+local upStroke = Instance.new("UIStroke", upBtn); upStroke.Color = Color3.fromRGB(40,40,46); upStroke.Transparency = 0.5
 
 local downBtn = Instance.new("TextButton", buttonContainer)
 downBtn.Name = "Down"
@@ -197,11 +222,8 @@ downBtn.TextScaled = true
 downBtn.BackgroundColor3 = Color3.fromRGB(58, 60, 72)
 downBtn.TextColor3 = Color3.fromRGB(235,235,235)
 downBtn.BorderSizePixel = 0
-local downCorner = Instance.new("UICorner", downBtn)
-downCorner.CornerRadius = UDim.new(0, 8)
-local downStroke = Instance.new("UIStroke", downBtn)
-downStroke.Color = Color3.fromRGB(40,40,46)
-downStroke.Transparency = 0.5
+local downCorner = Instance.new("UICorner", downBtn); downCorner.CornerRadius = UDim.new(0, 8)
+local downStroke = Instance.new("UIStroke", downBtn); downStroke.Color = Color3.fromRGB(40,40,46); downStroke.Transparency = 0.5
 
 -- Helper functions: conversions between UI and pixels
 local function getAreaSize()
@@ -237,6 +259,9 @@ local function getPaddleYPixels(paddleFrame)
     return paddleFrame.Position.Y.Offset
 end
 
+-- Track current paddle heights (so shop effects can change and revert)
+local currentPaddleHeights = { left = PADDLE_H, right = PADDLE_H }
+
 -- Initial state
 local areaSize = getAreaSize()
 setPaddleYPixels(leftPaddle, (areaSize.Y - PADDLE_H)/2)
@@ -246,6 +271,8 @@ setBallPositionPixels(Vector2.new(areaSize.X/2, areaSize.Y/2))
 local ballPos = getBallPositionPixels()
 local ballVel = Vector2.new(1, 0) -- unit vector set on reset
 local ballSpeed = BALL_INITIAL_SPEED
+-- global multiplier for shop effects (applies every frame to ballSpeed)
+local ballGlobalMultiplier = 1
 
 local leftScoreVal = 0
 local rightScoreVal = 0
@@ -288,12 +315,8 @@ UserInputService.GamepadDisconnected:Connect(function()
 end)
 
 -- On-screen buttons handlers
-local function setButtonAxis(val)
-    buttonAxis = val
-end
-local function clearButtonAxis()
-    buttonAxis = nil
-end
+local function setButtonAxis(val) buttonAxis = val end
+local function clearButtonAxis() buttonAxis = nil end
 
 local function connectHold(btn, axisVal)
     btn.InputBegan:Connect(function(input)
@@ -308,9 +331,7 @@ local function connectHold(btn, axisVal)
             clearButtonAxis()
         end
     end)
-    btn.MouseLeave:Connect(function()
-        clearButtonAxis()
-    end)
+    btn.MouseLeave:Connect(function() clearButtonAxis() end)
 end
 
 connectHold(upBtn, -1)
@@ -380,10 +401,8 @@ local function applyBoost(side, boostType)
     label.Font = Enum.Font.SourceSansSemibold
     label.TextScaled = true
     label.Text = info.text
-    local lblCorner = Instance.new("UICorner", label)
-    lblCorner.CornerRadius = UDim.new(0,6)
+    local lblCorner = Instance.new("UICorner", label); lblCorner.CornerRadius = UDim.new(0,6)
 
-    -- Remove/refresh label after duration in a safe way
     spawn(function()
         local remaining = activeBoosts[side].endsAt - tick()
         while remaining > 0 and alive do
@@ -406,6 +425,176 @@ local function updateBoosts()
         end
     end
 end
+
+-- ------ SHOP LOGIC ------
+
+local shopActiveEffects = {} -- track active temporary shop effects, to revert cleanly
+-- structure: { id = { endsAt = time, revert = fn } }
+
+local function canAfford(cost)
+    return leftScoreVal >= cost
+end
+
+local function spendPoints(cost)
+    leftScoreVal = math.max(0, leftScoreVal - cost)
+    leftScore.Text = tostring(leftScoreVal)
+end
+
+local function flashShopMessage(text, color)
+    color = color or Color3.fromRGB(200,200,200)
+    local msg = Instance.new("TextLabel", shopPanel)
+    msg.Size = UDim2.new(1, -12, 0, 22)
+    msg.Position = UDim2.new(0, 6, 1, -28)
+    msg.BackgroundTransparency = 0.4
+    msg.BackgroundColor3 = Color3.fromRGB(30,30,36)
+    msg.TextColor3 = color
+    msg.Font = Enum.Font.SourceSansSemibold
+    msg.TextScaled = true
+    msg.Text = text
+    local c = Instance.new("UICorner", msg); c.CornerRadius = UDim.new(0,6)
+    spawn(function()
+        wait(1.6)
+        if msg and msg.Parent then pcall(function() msg:Destroy() end) end
+    end)
+end
+
+-- Apply a shop item (only player can buy; effects mostly affect player or opponent)
+local function applyShopItem(item)
+    if not item then return end
+    if not canAfford(item.cost) then
+        flashShopMessage("Not enough points!", Color3.fromRGB(255,120,120))
+        return
+    end
+
+    spendPoints(item.cost)
+
+    local now = tick()
+    if item.id == "SlowBall" then
+        -- multiply ballGlobalMultiplier
+        local m = item.mult
+        ballGlobalMultiplier = ballGlobalMultiplier * m
+        -- schedule revert
+        table.insert(shopActiveEffects, { id = item.id, endsAt = now + item.duration, revert = function()
+            ballGlobalMultiplier = ballGlobalMultiplier / m
+        end })
+        flashShopMessage("Slow Ball bought!", Color3.fromRGB(120,200,255))
+    elseif item.id == "EnlargePaddle" then
+        local scale = item.scale
+        -- apply to left paddle height
+        local prev = currentPaddleHeights.left
+        local newH = math.floor(prev * scale)
+        currentPaddleHeights.left = newH
+        leftPaddle.Size = UDim2.new(0, PADDLE_W, 0, newH)
+        -- clamp position to keep paddle in bounds
+        setPaddleYPixels(leftPaddle, math.clamp(getPaddleYPixels(leftPaddle), 0, getAreaSize().Y - newH))
+
+        table.insert(shopActiveEffects, { id = item.id, endsAt = now + item.duration, revert = function()
+            currentPaddleHeights.left = PADDLE_H
+            leftPaddle.Size = UDim2.new(0, PADDLE_W, 0, PADDLE_H)
+            setPaddleYPixels(leftPaddle, math.clamp(getPaddleYPixels(leftPaddle), 0, getAreaSize().Y - PADDLE_H))
+        end })
+        flashShopMessage("Paddle enlarged!", Color3.fromRGB(160,230,140))
+    elseif item.id == "ShrinkOpponent" then
+        local scale = item.scale
+        local prev = currentPaddleHeights.right
+        local newH = math.max(28, math.floor(prev * scale))
+        currentPaddleHeights.right = newH
+        rightPaddle.Size = UDim2.new(0, PADDLE_W, 0, newH)
+        setPaddleYPixels(rightPaddle, math.clamp(getPaddleYPixels(rightPaddle), 0, getAreaSize().Y - newH))
+
+        table.insert(shopActiveEffects, { id = item.id, endsAt = now + item.duration, revert = function()
+            currentPaddleHeights.right = PADDLE_H
+            rightPaddle.Size = UDim2.new(0, PADDLE_W, 0, PADDLE_H)
+            setPaddleYPixels(rightPaddle, math.clamp(getPaddleYPixels(rightPaddle), 0, getAreaSize().Y - PADDLE_H))
+        end })
+        flashShopMessage("Opponent shrunk!", Color3.fromRGB(255,170,120))
+    end
+end
+
+-- shop active effects updater (reverts when time done)
+local function updateShopEffects()
+    local now = tick()
+    for i = #shopActiveEffects, 1, -1 do
+        local e = shopActiveEffects[i]
+        if now >= e.endsAt then
+            if e.revert then
+                pcall(e.revert)
+            end
+            table.remove(shopActiveEffects, i)
+        end
+    end
+end
+
+-- Build shop UI entries
+local function buildShopUI()
+    for i, item in ipairs(SHOP_YIELD) do
+        local yoff = 36 + (i-1) * 34
+        local row = Instance.new("Frame", shopPanel)
+        row.Size = UDim2.new(1, -12, 0, 30)
+        row.Position = UDim2.new(0, 6, 0, yoff)
+        row.BackgroundTransparency = 1
+
+        local name = Instance.new("TextLabel", row)
+        name.Size = UDim2.new(0.6, 0, 1, 0)
+        name.Position = UDim2.new(0, 0, 0, 0)
+        name.BackgroundTransparency = 1
+        name.Font = Enum.Font.SourceSansSemibold
+        name.TextColor3 = Color3.fromRGB(220,220,220)
+        name.TextScaled = true
+        name.Text = item.name
+
+        local cost = Instance.new("TextLabel", row)
+        cost.Size = UDim2.new(0.2, 0, 1, 0)
+        cost.Position = UDim2.new(0.6, 4, 0, 0)
+        cost.BackgroundTransparency = 1
+        cost.Font = Enum.Font.SourceSans
+        cost.TextColor3 = Color3.fromRGB(200,200,200)
+        cost.TextScaled = true
+        cost.Text = tostring(item.cost)
+
+        local btn = Instance.new("TextButton", row)
+        btn.Size = UDim2.new(0.2, -6, 1, 0)
+        btn.Position = UDim2.new(0.8, 4, 0, 0)
+        btn.Font = Enum.Font.SourceSansBold
+        btn.TextScaled = true
+        btn.Text = "Buy"
+        btn.BackgroundColor3 = Color3.fromRGB(50,120,220)
+        btn.TextColor3 = Color3.fromRGB(255,255,255)
+        btn.BorderSizePixel = 0
+        local bcorner = Instance.new("UICorner", btn); bcorner.CornerRadius = UDim.new(0,6)
+
+        btn.MouseButton1Click:Connect(function()
+            if not alive then return end
+            applyShopItem(item)
+        end)
+
+        -- hover tooltip
+        btn.MouseEnter:Connect(function()
+            local tip = shopPanel:FindFirstChild("Tip")
+            if tip then pcall(function() tip:Destroy() end) end
+            local tipLbl = Instance.new("TextLabel", shopPanel)
+            tipLbl.Name = "Tip"
+            tipLbl.Size = UDim2.new(1, -12, 0, 22)
+            tipLbl.Position = UDim2.new(0, 6, 1, -6)
+            tipLbl.BackgroundTransparency = 0.5
+            tipLbl.BackgroundColor3 = Color3.fromRGB(28,28,34)
+            tipLbl.TextColor3 = Color3.fromRGB(220,220,220)
+            tipLbl.Font = Enum.Font.SourceSans
+            tipLbl.TextScaled = true
+            tipLbl.Text = item.desc
+            local tc = Instance.new("UICorner", tipLbl)
+            tc.CornerRadius = UDim.new(0,6)
+        end)
+        btn.MouseLeave:Connect(function()
+            local tip = shopPanel:FindFirstChild("Tip")
+            if tip then pcall(function() tip:Destroy() end) end
+        end)
+    end
+end
+
+buildShopUI()
+
+-- ------ END SHOP LOGIC ------
 
 -- Reset ball
 local function resetBall(direction)
@@ -445,12 +634,8 @@ local function createBooster()
     frame.Position = UDim2.new(pos.X / size.X, 0, pos.Y / size.Y, 0)
     frame.BackgroundColor3 = BOOSTS[btype].color
     frame.BorderSizePixel = 0
-    local corner = Instance.new("UICorner", frame)
-    corner.CornerRadius = UDim.new(1, 0)
-    local pulse = Instance.new("UIStroke", frame)
-    pulse.Color = Color3.fromRGB(255,255,255)
-    pulse.Transparency = 0.75
-    pulse.Thickness = 1
+    local corner = Instance.new("UICorner", frame); corner.CornerRadius = UDim.new(1, 0)
+    local pulse = Instance.new("UIStroke", frame); pulse.Color = Color3.fromRGB(255,255,255); pulse.Transparency = 0.75; pulse.Thickness = 1
 
     local createdAt = tick()
     table.insert(boosters, {frame = frame, type = btype, pos = pos, createdAt = createdAt})
@@ -492,12 +677,10 @@ end
 
 -- Improved paddle hit reflection: uses hit point to compute a reliable outgoing direction
 local function reflectFromPaddle(side, px, py, pw, ph)
-    -- compute normalized hit offset (-1 top .. 0 center .. 1 bottom)
     local hitOffset = (ballPos.Y - (py + ph/2)) / (ph/2)
     hitOffset = math.clamp(hitOffset, -1, 1)
     local dirX = (side == "left") and 1 or -1
     local dir = Vector2.new(dirX, hitOffset)
-    -- Ensure the horizontal component is not too small to avoid sliding
     if math.abs(dir.X) < 0.5 then
         dir = Vector2.new(0.5 * dirX, dir.Y)
     end
@@ -523,6 +706,7 @@ renderConn = RunService.RenderStepped:Connect(function()
 
     areaSize = getAreaSize()
     updateBoosts()
+    updateShopEffects()
 
     -- Determine control axis: buttons override keyboard/gamepad
     local finalAxis = (buttonAxis ~= nil) and buttonAxis or controlAxis
@@ -531,15 +715,14 @@ renderConn = RunService.RenderStepped:Connect(function()
     local playerYPixels = getPaddleYPixels(leftPaddle)
     local playerSpeed = PADDLE_BASE_SPEED * activeBoosts.left.mult
     local moveY = finalAxis * playerSpeed * dt
-    playerYPixels = math.clamp(playerYPixels + moveY, 0, areaSize.Y - PADDLE_H)
+    playerYPixels = math.clamp(playerYPixels + moveY, 0, areaSize.Y - leftPaddle.AbsoluteSize.Y)
     setPaddleYPixels(leftPaddle, playerYPixels)
 
     -- AI paddle: follow ball Y with speed (affected by boost) but with reaction delay and deadzone
     aiReactionTimer = aiReactionTimer - dt
     if aiReactionTimer <= 0 then
-        -- set new target with slight inaccuracy
-        local jitter = (math.random() * 2 - 1) * AI_JITTER * PADDLE_H
-        aiTargetY = math.clamp(ballPos.Y - PADDLE_H/2 + jitter, 0, areaSize.Y - PADDLE_H)
+        local jitter = (math.random() * 2 - 1) * AI_JITTER * currentPaddleHeights.right
+        aiTargetY = math.clamp(ballPos.Y - currentPaddleHeights.right/2 + jitter, 0, areaSize.Y - currentPaddleHeights.right)
         aiReactionTimer = AI_REACTION_TIME + math.random() * (AI_REACTION_TIME * 0.8)
     end
 
@@ -554,8 +737,8 @@ renderConn = RunService.RenderStepped:Connect(function()
     end
     setPaddleYPixels(rightPaddle, aiYPixels)
 
-    -- Ball physics
-    ballPos = ballPos + ballVel * ballSpeed * dt
+    -- Ball physics (apply global multiplier from shop)
+    ballPos = ballPos + ballVel * ballSpeed * ballGlobalMultiplier * dt
     local radius = BALL_SIZE/2
 
     -- Top/bottom wall collision
@@ -576,7 +759,6 @@ renderConn = RunService.RenderStepped:Connect(function()
         local px, py, pw, ph = paddleRectPixels(leftPaddle)
         if ballPos.X - radius <= px + pw then
             if ballPos.Y >= py and ballPos.Y <= py + ph then
-                -- compute reliable new direction from hit point
                 ballPos = Vector2.new(px + pw + radius, ballPos.Y)
                 local newDir = reflectFromPaddle("left", px, py, pw, ph)
                 ballVel = newDir
@@ -604,14 +786,13 @@ renderConn = RunService.RenderStepped:Connect(function()
         end
     end
 
-    -- Booster collisions: ball touching booster gives boost to lastHit; paddle touching booster gives boost to that side
+    -- Booster collisions
     for i = #boosters, 1, -1 do
         local b = boosters[i]
         if not b.frame or not b.frame.Parent then
             table.remove(boosters, i)
         else
             local posPixels = b.pos
-            -- Check ball collision
             local dist = (ballPos - posPixels).magnitude
             if dist <= radius + BOOST_RADIUS then
                 applyBoost(lastHit, b.type)
@@ -619,7 +800,6 @@ renderConn = RunService.RenderStepped:Connect(function()
                 if b.frame and b.frame.Parent then pcall(function() b.frame:Destroy() end) end
                 table.remove(boosters, i)
             else
-                -- check left paddle touch
                 local px, py, pw, ph = paddleRectPixels(leftPaddle)
                 local closestX = math.clamp(posPixels.X, px, px + pw)
                 local closestY = math.clamp(posPixels.Y, py, py + ph)
@@ -630,7 +810,6 @@ renderConn = RunService.RenderStepped:Connect(function()
                     if b.frame and b.frame.Parent then pcall(function() b.frame:Destroy() end) end
                     table.remove(boosters, i)
                 else
-                    -- check right paddle touch
                     local px2, py2, pw2, ph2 = paddleRectPixels(rightPaddle)
                     local closestX2 = math.clamp(posPixels.X, px2, px2 + pw2)
                     local closestY2 = math.clamp(posPixels.Y, py2, py2 + ph2)
@@ -667,11 +846,11 @@ end)
 playFrame:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
     if not alive then return end
     local size = getAreaSize()
-    setPaddleYPixels(leftPaddle, math.clamp(getPaddleYPixels(leftPaddle), 0, size.Y - PADDLE_H))
-    setPaddleYPixels(rightPaddle, math.clamp(getPaddleYPixels(rightPaddle), 0, size.Y - PADDLE_H))
+    setPaddleYPixels(leftPaddle, math.clamp(getPaddleYPixels(leftPaddle), 0, size.Y - leftPaddle.AbsoluteSize.Y))
+    setPaddleYPixels(rightPaddle, math.clamp(getPaddleYPixels(rightPaddle), 0, size.Y - rightPaddle.AbsoluteSize.Y))
     setBallPositionPixels(ballPos)
-    -- reposition close button relative to playFrame
     closeBtn.Position = UDim2.new(0.5, PLAY_AREA_SIZE.X/2, 0.5, -PLAY_AREA_SIZE.Y/2)
+    shopToggle.Position = UDim2.new(0.5, PLAY_AREA_SIZE.X/2 - 44, 0.5, -PLAY_AREA_SIZE.Y/2)
 end)
 
 -- Instruction label
@@ -683,19 +862,23 @@ info.BackgroundTransparency = 1
 info.TextColor3 = Color3.fromRGB(200,200,200)
 info.Font = Enum.Font.SourceSans
 info.TextScaled = true
-info.Text = "Use joystick vertical or Up/Down keys, or on-screen buttons. Boosters spawn randomly."
+info.Text = "Use joystick vertical or Up/Down keys, or on-screen buttons. Boosters & shop available."
 
 -- Close button behavior: clean shutdown
 closeBtn.MouseButton1Click:Connect(function()
     if not alive then return end
     alive = false
-    -- disconnect render loop
-    if renderConn then
-        pcall(function() renderConn:Disconnect() end)
-        renderConn = nil
-    end
-    -- destroy GUI safely
+    if renderConn then pcall(function() renderConn:Disconnect() end) end
     pcall(function() screenGui:Destroy() end)
 end)
 
--- End of script
+-- Shop toggle
+shopToggle.MouseButton1Click:Connect(function()
+    if not alive then return end
+    shopPanel.Visible = not shopPanel.Visible
+end)
+
+-- Clean up when script ends
+game:BindToClose(function()
+    alive = false
+end)
