@@ -1,9 +1,5 @@
--- Polished Pong LocalScript (easier bot + slower ball) + Shop
--- Place this LocalScript in StarterPlayer > StarterPlayerScripts
--- Adds a shop that uses your points (left score) to buy temporary effects:
---  - Slow Ball (5 pts) : ball global speed x0.75 for 10s
---  - Enlarge Paddle (7 pts) : your (left) paddle height +30% for 10s
---  - Shrink Opponent (7 pts) : bot (right) paddle height -25% for 10s
+-- Polished Pong LocalScript v3
+-- Difficulty affects points per goal: Easy=1, Medium=2, Hard=3
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -11,52 +7,54 @@ local UserInputService = game:GetService("UserInputService")
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
--- RUN CONTROL
 local alive = true
 
--- Config (smaller GUI)
 local PLAY_AREA_SIZE = Vector2.new(640, 360)
 local PADDLE_W = 10
 local PADDLE_H = 80
 local BALL_SIZE = 14
-
--- Player and AI speeds
-local PADDLE_BASE_SPEED = 380        -- player base speed (pixels/sec)
-local AI_BASE_SPEED = 260            -- bot base speed (pixels/sec) -- reduced for easier bot
-local AI_REACTION_TIME = 0.12        -- seconds between AI target updates (adds slowness)
-local AI_DEADZONE = 22               -- pixels: AI won't correct small offsets inside this zone
-local AI_JITTER = 0.12               -- small jitter
-
--- Ball speed settings (slower & gentler accel)
-local BALL_INITIAL_SPEED = 320       -- slower initial ball speed
-local BALL_SPEED_INCREASE = 1.03     -- gentler speed increase on hits
-
-local BOOST_DURATION = 6             -- seconds boost lasts
+local PADDLE_BASE_SPEED = 380
+local BALL_INITIAL_SPEED = 320
+local BALL_SPEED_INCREASE = 1.03
+local BOOST_DURATION = 6
 local BOOST_SPAWN_MIN = 7
 local BOOST_SPAWN_MAX = 17
-local BOOST_RADIUS = 16              -- pixels radius (visual)
-local BOOST_LIFETIME = 12            -- boosters despawn after this if not collected
+local BOOST_RADIUS = 16
+local BOOST_LIFETIME = 12
 local PING_SOUND_ID = "rbxassetid://12222216"
 
--- Shop config
-local SHOP_YIELD = { -- shop items
-    { id = "SlowBall", name = "Slow Ball", cost = 5, duration = 10,
-      desc = "Ball speed ×0.75 for 10s", mult = 0.75 },
-    { id = "EnlargePaddle", name = "Enlarge Paddle", cost = 7, duration = 10,
-      desc = "Your paddle +30% height for 10s", scale = 1.30 },
-    { id = "ShrinkOpponent", name = "Shrink Opponent", cost = 7, duration = 10,
-      desc = "Opponent paddle -25% height for 10s", scale = 0.75 },
+local DIFFICULTY_PRESETS = {
+    Easy   = { speed = 180, reaction = 0.22, deadzone = 35, jitter = 0.25 },
+    Medium = { speed = 260, reaction = 0.12, deadzone = 22, jitter = 0.12 },
+    Hard   = { speed = 370, reaction = 0.04, deadzone = 8,  jitter = 0.03 },
+}
+local currentDifficulty = "Medium"
+local AI_BASE_SPEED    = DIFFICULTY_PRESETS.Medium.speed
+local AI_REACTION_TIME = DIFFICULTY_PRESETS.Medium.reaction
+local AI_DEADZONE      = DIFFICULTY_PRESETS.Medium.deadzone
+local AI_JITTER        = DIFFICULTY_PRESETS.Medium.jitter
+
+local SHOP_YIELD = {
+    { id = "SlowBall",        name = "Slow Ball",        cost = 5,  duration = 10, desc = "Ball speed ×0.75 for 10s",           mult  = 0.75 },
+    { id = "EnlargePaddle",   name = "Enlarge Paddle",   cost = 7,  duration = 10, desc = "Your paddle +30% height for 10s",    scale = 1.30 },
+    { id = "ShrinkOpponent",  name = "Shrink Opponent",  cost = 7,  duration = 10, desc = "Opponent paddle -25% height for 10s",scale = 0.75 },
+    { id = "DoublePoints",    name = "Double Points",    cost = 6,  duration = 15, desc = "Score 2× pts per goal for 15s"                     },
+    { id = "ReverseControls", name = "Reverse Bot",      cost = 8,  duration = 8,  desc = "Bot moves inverted for 8s"                        },
+    { id = "GhostBall",       name = "Ghost Ball",       cost = 10, duration = 6,  desc = "Ball ignores bot paddle for 6s"                   },
+    { id = "TurboBall",       name = "Turbo Ball",       cost = 9,  duration = 8,  desc = "Ball speed ×1.5 for 8s"                              },
+    { id = "Shield",          name = "Shield",           cost = 12, duration = 1,  desc = "Next bot shot bounces back once"                      },
 }
 
--- Boost multipliers
 local BOOSTS = {
-    SpeedUp = {mult = 1.6, color = Color3.fromRGB(80, 170, 255), text = "Speed Up!"},
-    SlowDown = {mult = 0.6, color = Color3.fromRGB(255, 110, 110), text = "Slow Down!"},
+    SpeedUp  = { mult = 1.6, color = Color3.fromRGB(80, 170, 255), text = "Speed Up!"  },
+    SlowDown = { mult = 0.6, color = Color3.fromRGB(255, 110, 110), text = "Slow Down!" },
 }
 
--- UI Creation
+-- ──────────────────────────────────────────────
+-- GUI
+-- ──────────────────────────────────────────────
 local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "PongGUI_Polished_Shop"
+screenGui.Name = "PongGUI_v3"
 screenGui.ResetOnSpawn = false
 screenGui.Parent = playerGui
 
@@ -69,80 +67,169 @@ playFrame.Size = UDim2.new(0, PLAY_AREA_SIZE.X, 0, PLAY_AREA_SIZE.Y)
 playFrame.BackgroundColor3 = Color3.fromRGB(18, 20, 28)
 playFrame.BorderSizePixel = 0
 playFrame.ClipsDescendants = true
+Instance.new("UICorner", playFrame).CornerRadius = UDim.new(0, 10)
+local pfStroke = Instance.new("UIStroke", playFrame)
+pfStroke.Color = Color3.fromRGB(42, 45, 55); pfStroke.Transparency = 0.35; pfStroke.Thickness = 1
+local pfGrad = Instance.new("UIGradient", playFrame)
+pfGrad.Color = ColorSequence.new{
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(20,22,30)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(24,26,34))
+}
+pfGrad.Rotation = 90
 
-local pfCorner = Instance.new("UICorner", playFrame); pfCorner.CornerRadius = UDim.new(0, 10)
-local pfStroke = Instance.new("UIStroke", playFrame); pfStroke.Color = Color3.fromRGB(42,45,55); pfStroke.Transparency = 0.35; pfStroke.Thickness = 1
-local pfGrad = Instance.new("UIGradient", playFrame); pfGrad.Color = ColorSequence.new{ ColorSequenceKeypoint.new(0, Color3.fromRGB(20,22,30)), ColorSequenceKeypoint.new(1, Color3.fromRGB(24,26,34)) }; pfGrad.Rotation = 90
+local function makeTopBtn(text, xOffset, w)
+    local btn = Instance.new("TextButton", screenGui)
+    btn.AnchorPoint = Vector2.new(1, 0)
+    btn.Position = UDim2.new(0.5, PLAY_AREA_SIZE.X/2 + xOffset, 0.5, -PLAY_AREA_SIZE.Y/2)
+    btn.Size = UDim2.new(0, w or 34, 0, 30)
+    btn.Text = text
+    btn.Font = Enum.Font.SourceSansBold
+    btn.TextSize = 14
+    btn.TextColor3 = Color3.fromRGB(230, 230, 230)
+    btn.BackgroundColor3 = Color3.fromRGB(38, 40, 50)
+    btn.BorderSizePixel = 0
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+    Instance.new("UIStroke", btn).Color = Color3.fromRGB(50, 52, 62)
+    return btn
+end
 
--- Close (X) button
-local closeBtn = Instance.new("TextButton", screenGui)
-closeBtn.Name = "CloseUI"
-closeBtn.AnchorPoint = Vector2.new(1, 0)
-closeBtn.Position = UDim2.new(0.5, PLAY_AREA_SIZE.X/2, 0.5, -PLAY_AREA_SIZE.Y/2) -- top-right of playFrame
-closeBtn.Size = UDim2.new(0, 34, 0, 30)
-closeBtn.Text = "✕"
-closeBtn.Font = Enum.Font.SourceSansBold
-closeBtn.TextSize = 20
-closeBtn.TextColor3 = Color3.fromRGB(230,230,230)
-closeBtn.BackgroundColor3 = Color3.fromRGB(40,40,48)
-closeBtn.BorderSizePixel = 0
-local cbCorner = Instance.new("UICorner", closeBtn); cbCorner.CornerRadius = UDim.new(0, 6)
-local cbStroke = Instance.new("UIStroke", closeBtn); cbStroke.Color = Color3.fromRGB(34,34,40); cbStroke.Transparency = 0.5
+local closeBtn   = makeTopBtn("✕",   0,   34)
+local shopToggle = makeTopBtn("Shop",-75, 44)
+local diffToggle = makeTopBtn("Med", -125, 38)
 
--- Shop toggle button (left of close)
-local shopToggle = Instance.new("TextButton", screenGui)
-shopToggle.Name = "ShopToggle"
-shopToggle.AnchorPoint = Vector2.new(1, 0)
-shopToggle.Position = UDim2.new(0.5, PLAY_AREA_SIZE.X/2 - 70, 0.5, -PLAY_AREA_SIZE.Y/2)
-shopToggle.Size = UDim2.new(0, 44, 0, 30)
-shopToggle.Text = "Shop"
-shopToggle.Font = Enum.Font.SourceSansBold
-shopToggle.TextSize = 14
-shopToggle.TextColor3 = Color3.fromRGB(230,230,230)
-shopToggle.BackgroundColor3 = Color3.fromRGB(32,34,40)
-shopToggle.BorderSizePixel = 0
-local stCorner = Instance.new("UICorner", shopToggle); stCorner.CornerRadius = UDim.new(0,6)
+-- Save/Load buttons: top right outside the play area
+local SAVE_FILE = "pong_save.txt"
 
--- Shop panel (hidden initially)
+local function makeSaveLoadBtn(text, xOffset)
+    local btn = Instance.new("TextButton", screenGui)
+    btn.AnchorPoint = Vector2.new(0, 0)
+    btn.Position = UDim2.new(0.5, PLAY_AREA_SIZE.X/2 + xOffset, 0.5, -PLAY_AREA_SIZE.Y/2)
+    btn.Size = UDim2.new(0, 52, 0, 30)
+    btn.Text = text
+    btn.Font = Enum.Font.SourceSansBold
+    btn.TextSize = 13
+    btn.TextColor3 = Color3.fromRGB(230, 230, 230)
+    btn.BackgroundColor3 = Color3.fromRGB(38, 40, 50)
+    btn.BorderSizePixel = 0
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+    Instance.new("UIStroke", btn).Color = Color3.fromRGB(50, 52, 62)
+    return btn
+end
+
+local saveBtn = makeSaveLoadBtn("💾 Save", 4)
+local loadBtn = makeSaveLoadBtn("📂 Load", 62)
+
+saveBtn.MouseButton1Click:Connect(function()
+    if not alive then return end
+    local data = tostring(leftScoreVal) .. "|" .. tostring(rightScoreVal) .. "|" .. tostring(currentDifficulty)
+    local ok, err = pcall(function() writefile(SAVE_FILE, data) end)
+    if ok then
+        showPing("Saved!", Vector2.new(PLAY_AREA_SIZE.X/2, areaSize.Y/2))
+    else
+        showPing("Save failed!", Vector2.new(PLAY_AREA_SIZE.X/2, areaSize.Y/2))
+        warn("[Pong Save] Save error: " .. tostring(err))
+    end
+end)
+
+loadBtn.MouseButton1Click:Connect(function()
+    if not alive then return end
+    local ok, err = pcall(function()
+        if not isfile(SAVE_FILE) then
+            showPing("No save!", Vector2.new(PLAY_AREA_SIZE.X/2, areaSize.Y/2))
+            return
+        end
+        local data = readfile(SAVE_FILE)
+        local parts = string.split(data, "|")
+        if parts[1] then
+            leftScoreVal = tonumber(parts[1]) or 0
+            leftScore.Text = tostring(leftScoreVal)
+        end
+        if parts[2] then
+            rightScoreVal = tonumber(parts[2]) or 0
+            rightScore.Text = tostring(rightScoreVal)
+        end
+        if parts[3] then
+            local d = parts[3]:match("^%s*(.-)%s*$") -- trim whitespace
+            if DIFFICULTY_PRESETS[d] then
+                applyDifficulty(d)
+            end
+        end
+        showPing("Loaded!", Vector2.new(PLAY_AREA_SIZE.X/2, areaSize.Y/2))
+    end)
+    if not ok then
+        showPing("Load failed!", Vector2.new(PLAY_AREA_SIZE.X/2, areaSize.Y/2))
+        warn("[Pong Save] Load error: " .. tostring(err))
+    end
+end)
+
+local diffOrder  = {"Easy", "Medium", "Hard"}
+local diffColors = {
+    Easy   = Color3.fromRGB(60, 160, 80),
+    Medium = Color3.fromRGB(38, 40,  50),
+    Hard   = Color3.fromRGB(180, 50, 50),
+}
+local diffLabels = { Easy = "Easy", Medium = "Med", Hard = "Hard" }
+
+local function applyDifficulty(d)
+    currentDifficulty  = d
+    local p = DIFFICULTY_PRESETS[d]
+    AI_BASE_SPEED    = p.speed
+    AI_REACTION_TIME = p.reaction
+    AI_DEADZONE      = p.deadzone
+    AI_JITTER        = p.jitter
+    diffToggle.Text  = diffLabels[d]
+    diffToggle.BackgroundColor3 = diffColors[d]
+end
+applyDifficulty("Medium")
+
+diffToggle.MouseButton1Click:Connect(function()
+    local idx = 1
+    for i, v in ipairs(diffOrder) do if v == currentDifficulty then idx = i break end end
+    idx = (idx % #diffOrder) + 1
+    applyDifficulty(diffOrder[idx])
+end)
+
+-- Shop panel
 local shopPanel = Instance.new("Frame", screenGui)
 shopPanel.Name = "ShopPanel"
 shopPanel.AnchorPoint = Vector2.new(0, 1)
-shopPanel.Position = UDim2.new(0, 12, 0.5, -PLAY_AREA_SIZE.Y/2)
-shopPanel.Size = UDim2.new(0, 240, 0, 140)
-shopPanel.BackgroundColor3 = Color3.fromRGB(22,24,30)
+shopPanel.Position = UDim2.new(0.5, -PLAY_AREA_SIZE.X/2, 0.5, -PLAY_AREA_SIZE.Y/2)
+shopPanel.Size = UDim2.new(0, 420, 0, 36 + 4 * 34 + 10)
+shopPanel.BackgroundColor3 = Color3.fromRGB(20, 22, 28)
 shopPanel.BorderSizePixel = 0
 shopPanel.Visible = false
-local spCorner = Instance.new("UICorner", shopPanel); spCorner.CornerRadius = UDim.new(0,8)
-local spStroke = Instance.new("UIStroke", shopPanel); spStroke.Color = Color3.fromRGB(36,38,44); spStroke.Transparency = 0.3
+shopPanel.ZIndex = 20
+Instance.new("UICorner", shopPanel).CornerRadius = UDim.new(0, 8)
+local spStroke = Instance.new("UIStroke", shopPanel)
+spStroke.Color = Color3.fromRGB(50, 52, 62); spStroke.Transparency = 0.2
 
 local shopTitle = Instance.new("TextLabel", shopPanel)
 shopTitle.Size = UDim2.new(1, -12, 0, 28)
-shopTitle.Position = UDim2.new(0, 6, 0, 6)
+shopTitle.Position = UDim2.new(0, 8, 0, 4)
 shopTitle.BackgroundTransparency = 1
-shopTitle.Text = "Shop"
+shopTitle.Text = "🛒 Shop  (your pts: 0)"
 shopTitle.Font = Enum.Font.SourceSansBold
-shopTitle.TextColor3 = Color3.fromRGB(230,230,230)
+shopTitle.TextColor3 = Color3.fromRGB(230, 230, 230)
 shopTitle.TextScaled = true
 shopTitle.TextXAlignment = Enum.TextXAlignment.Left
+shopTitle.ZIndex = 21
 
 -- Score labels
 local leftScore = Instance.new("TextLabel", playFrame)
-leftScore.Name = "LeftScore"
 leftScore.Size = UDim2.new(0, 84, 0, 30)
 leftScore.Position = UDim2.new(0, 12, 0, 8)
 leftScore.BackgroundTransparency = 1
-leftScore.TextColor3 = Color3.fromRGB(225,225,225)
+leftScore.TextColor3 = Color3.fromRGB(225, 225, 225)
 leftScore.Font = Enum.Font.SourceSansBold
 leftScore.TextScaled = true
 leftScore.Text = "0"
 
 local rightScore = Instance.new("TextLabel", playFrame)
-rightScore.Name = "RightScore"
 rightScore.Size = UDim2.new(0, 84, 0, 30)
 rightScore.AnchorPoint = Vector2.new(1, 0)
 rightScore.Position = UDim2.new(1, -12, 0, 8)
 rightScore.BackgroundTransparency = 1
-rightScore.TextColor3 = Color3.fromRGB(225,225,225)
+rightScore.TextColor3 = Color3.fromRGB(225, 225, 225)
 rightScore.Font = Enum.Font.SourceSansBold
 rightScore.TextScaled = true
 rightScore.Text = "0"
@@ -154,27 +241,25 @@ mid.Position = UDim2.new(0.5, -1, 0, 0)
 mid.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
 mid.BackgroundTransparency = 0.85
 
--- Paddles & Ball (UI frames)
+-- Paddles
 local leftPaddle = Instance.new("Frame", playFrame)
 leftPaddle.Name = "LeftPaddle"
 leftPaddle.Size = UDim2.new(0, PADDLE_W, 0, PADDLE_H)
 leftPaddle.Position = UDim2.new(0, 16, 0.5, -PADDLE_H/2)
-leftPaddle.AnchorPoint = Vector2.new(0, 0)
-leftPaddle.BackgroundColor3 = Color3.fromRGB(240,240,240)
+leftPaddle.BackgroundColor3 = Color3.fromRGB(240, 240, 240)
 leftPaddle.BorderSizePixel = 0
-local lpCorner = Instance.new("UICorner", leftPaddle); lpCorner.CornerRadius = UDim.new(0, 6)
-local lpStroke = Instance.new("UIStroke", leftPaddle); lpStroke.Color = Color3.fromRGB(200,200,200); lpStroke.Transparency = 0.6
+Instance.new("UICorner", leftPaddle).CornerRadius = UDim.new(0, 6)
 
 local rightPaddle = Instance.new("Frame", playFrame)
 rightPaddle.Name = "RightPaddle"
 rightPaddle.Size = UDim2.new(0, PADDLE_W, 0, PADDLE_H)
 rightPaddle.AnchorPoint = Vector2.new(1, 0)
 rightPaddle.Position = UDim2.new(1, -16, 0.5, -PADDLE_H/2)
-rightPaddle.BackgroundColor3 = Color3.fromRGB(240,240,240)
+rightPaddle.BackgroundColor3 = Color3.fromRGB(240, 240, 240)
 rightPaddle.BorderSizePixel = 0
-local rpCorner = Instance.new("UICorner", rightPaddle); rpCorner.CornerRadius = UDim.new(0, 6)
-local rpStroke = Instance.new("UIStroke", rightPaddle); rpStroke.Color = Color3.fromRGB(200,200,200); rpStroke.Transparency = 0.6
+Instance.new("UICorner", rightPaddle).CornerRadius = UDim.new(0, 6)
 
+-- Ball
 local ball = Instance.new("Frame", playFrame)
 ball.Name = "Ball"
 ball.Size = UDim2.new(0, BALL_SIZE, 0, BALL_SIZE)
@@ -182,470 +267,461 @@ ball.AnchorPoint = Vector2.new(0.5, 0.5)
 ball.Position = UDim2.new(0.5, 0, 0.5, 0)
 ball.BackgroundColor3 = Color3.fromRGB(255, 200, 50)
 ball.BorderSizePixel = 0
-local ballCorner = Instance.new("UICorner", ball); ballCorner.CornerRadius = UDim.new(1, 0)
-local ballStroke = Instance.new("UIStroke", ball); ballStroke.Color = Color3.fromRGB(210,140,30); ballStroke.Transparency = 0.5
+Instance.new("UICorner", ball).CornerRadius = UDim.new(1, 0)
 
--- Ping sound
 local pingSound = Instance.new("Sound", screenGui)
-pingSound.Name = "PingSound"
 pingSound.SoundId = PING_SOUND_ID
 pingSound.Volume = 0.85
 
--- Up/Down Buttons (mobile)
+-- Mobile buttons
 local buttonContainer = Instance.new("Frame", screenGui)
-buttonContainer.Name = "Buttons"
 buttonContainer.Size = UDim2.new(0, 120, 0, 180)
 buttonContainer.AnchorPoint = Vector2.new(0, 1)
 buttonContainer.Position = UDim2.new(0, 12, 1, -12)
 buttonContainer.BackgroundTransparency = 1
 
-local upBtn = Instance.new("TextButton", buttonContainer)
-upBtn.Name = "Up"
-upBtn.Size = UDim2.new(1, 0, 0.5, -6)
-upBtn.Position = UDim2.new(0, 0, 0, 0)
-upBtn.Text = "▲"
-upBtn.Font = Enum.Font.SourceSansSemibold
-upBtn.TextScaled = true
-upBtn.BackgroundColor3 = Color3.fromRGB(58, 60, 72)
-upBtn.TextColor3 = Color3.fromRGB(235,235,235)
-upBtn.BorderSizePixel = 0
-local upCorner = Instance.new("UICorner", upBtn); upCorner.CornerRadius = UDim.new(0, 8)
-local upStroke = Instance.new("UIStroke", upBtn); upStroke.Color = Color3.fromRGB(40,40,46); upStroke.Transparency = 0.5
+local function makeMobileBtn(text, yPos)
+    local btn = Instance.new("TextButton", buttonContainer)
+    btn.Size = UDim2.new(1, 0, 0.5, -6)
+    btn.Position = yPos
+    btn.Text = text
+    btn.Font = Enum.Font.SourceSansSemibold
+    btn.TextScaled = true
+    btn.BackgroundColor3 = Color3.fromRGB(58, 60, 72)
+    btn.TextColor3 = Color3.fromRGB(235, 235, 235)
+    btn.BorderSizePixel = 0
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
+    return btn
+end
+local upBtn   = makeMobileBtn("▲", UDim2.new(0, 0, 0, 0))
+local downBtn = makeMobileBtn("▼", UDim2.new(0, 0, 0.5, 6))
 
-local downBtn = Instance.new("TextButton", buttonContainer)
-downBtn.Name = "Down"
-downBtn.Size = UDim2.new(1, 0, 0.5, -6)
-downBtn.Position = UDim2.new(0, 0, 0.5, 6)
-downBtn.Text = "▼"
-downBtn.Font = Enum.Font.SourceSansSemibold
-downBtn.TextScaled = true
-downBtn.BackgroundColor3 = Color3.fromRGB(58, 60, 72)
-downBtn.TextColor3 = Color3.fromRGB(235,235,235)
-downBtn.BorderSizePixel = 0
-local downCorner = Instance.new("UICorner", downBtn); downCorner.CornerRadius = UDim.new(0, 8)
-local downStroke = Instance.new("UIStroke", downBtn); downStroke.Color = Color3.fromRGB(40,40,46); downStroke.Transparency = 0.5
+-- Instruction label
+local info = Instance.new("TextLabel", playFrame)
+info.Size = UDim2.new(0, 380, 0, 20)
+info.Position = UDim2.new(0.5, 0, 1, -26)
+info.AnchorPoint = Vector2.new(0.5, 0)
+info.BackgroundTransparency = 1
+info.TextColor3 = Color3.fromRGB(160, 160, 160)
+info.Font = Enum.Font.SourceSans
+info.TextScaled = true
+info.Text = "W/S or ▲▼ to move  ·  Shop for power-ups  ·  Easy=1pt  Medium=2pt  Hard=3pt"
 
--- Helper functions: conversions between UI and pixels
+-- ──────────────────────────────────────────────
+-- HELPERS
+-- ──────────────────────────────────────────────
 local function getAreaSize()
-    local size = playFrame.AbsoluteSize
-    if size.X == 0 and size.Y == 0 then
-        return PLAY_AREA_SIZE
-    end
-    return Vector2.new(size.X, size.Y)
+    local s = playFrame.AbsoluteSize
+    return (s.X == 0 and s.Y == 0) and PLAY_AREA_SIZE or Vector2.new(s.X, s.Y)
 end
 
-local function setBallPositionPixels(pos)
-    local size = getAreaSize()
-    local x = pos.X / size.X
-    local y = pos.Y / size.Y
-    ball.Position = UDim2.new(x, 0, y, 0)
+local function setBallPos(pos)
+    local s = getAreaSize()
+    ball.Position = UDim2.new(pos.X/s.X, 0, pos.Y/s.Y, 0)
 end
 
-local function getBallPositionPixels()
-    local size = getAreaSize()
-    local center = ball.Position
-    local x = center.X.Scale * size.X + center.X.Offset
-    local y = center.Y.Scale * size.Y + center.Y.Offset
-    return Vector2.new(x, y)
+local function setPaddleY(p, y)
+    local s = getAreaSize()
+    p.Position = UDim2.new(p.Position.X.Scale, p.Position.X.Offset, 0, math.clamp(y, 0, s.Y - p.AbsoluteSize.Y))
 end
 
-local function setPaddleYPixels(paddleFrame, yPixels)
-    local size = getAreaSize()
-    local clampedY = math.clamp(yPixels, 0, size.Y - paddleFrame.AbsoluteSize.Y)
-    paddleFrame.Position = UDim2.new(paddleFrame.Position.X.Scale, paddleFrame.Position.X.Offset, 0, clampedY)
+local function getPaddleY(p) return p.Position.Y.Offset end
+
+local function paddleRect(p)
+    local px = p.AbsolutePosition.X - playFrame.AbsolutePosition.X
+    return px, getPaddleY(p), p.AbsoluteSize.X, p.AbsoluteSize.Y
 end
 
-local function getPaddleYPixels(paddleFrame)
-    return paddleFrame.Position.Y.Offset
-end
-
--- Track current paddle heights (so shop effects can change and revert)
+-- ──────────────────────────────────────────────
+-- GAME STATE
+-- ──────────────────────────────────────────────
 local currentPaddleHeights = { left = PADDLE_H, right = PADDLE_H }
-
--- Initial state
 local areaSize = getAreaSize()
-setPaddleYPixels(leftPaddle, (areaSize.Y - PADDLE_H)/2)
-setPaddleYPixels(rightPaddle, (areaSize.Y - PADDLE_H)/2)
-setBallPositionPixels(Vector2.new(areaSize.X/2, areaSize.Y/2))
+setPaddleY(leftPaddle,  (areaSize.Y - PADDLE_H)/2)
+setPaddleY(rightPaddle, (areaSize.Y - PADDLE_H)/2)
 
-local ballPos = getBallPositionPixels()
-local ballVel = Vector2.new(1, 0) -- unit vector set on reset
+local ballPos   = Vector2.new(areaSize.X/2, areaSize.Y/2)
+local ballVel   = Vector2.new(1, 0)
 local ballSpeed = BALL_INITIAL_SPEED
--- global multiplier for shop effects (applies every frame to ballSpeed)
 local ballGlobalMultiplier = 1
-
-local leftScoreVal = 0
+local leftScoreVal  = 0
 local rightScoreVal = 0
+local lastHit = "left"
 
--- Input handling: joystick vertical axis and keyboard fallback
-local controlAxis = 0 -- -1 up, +1 down from keyboard/gamepad
-local buttonAxis = nil -- when on-screen buttons pressed: -1 or +1, nil otherwise
+local doublePointsActive    = false
+local reverseControlsActive = false
+local ghostBallActive       = false
+local shieldActive          = false
 
--- Keyboard
-local function onInputBegan(input, gpe)
+local controlAxis = 0
+local buttonAxis  = nil
+
+local activeBoosts = {
+    left  = { mult = 1, endsAt = 0 },
+    right = { mult = 1, endsAt = 0 },
+}
+local shopActiveEffects = {}
+local boosters = {}
+
+-- ──────────────────────────────────────────────
+-- INPUT
+-- ──────────────────────────────────────────────
+UserInputService.InputBegan:Connect(function(input, gpe)
     if gpe then return end
-    if input.KeyCode == Enum.KeyCode.W or input.KeyCode == Enum.KeyCode.Up then
-        controlAxis = controlAxis - 1
-    elseif input.KeyCode == Enum.KeyCode.S or input.KeyCode == Enum.KeyCode.Down then
-        controlAxis = controlAxis + 1
-    end
-end
-local function onInputEnded(input, gpe)
+    if input.KeyCode == Enum.KeyCode.W or input.KeyCode == Enum.KeyCode.Up   then controlAxis -= 1 end
+    if input.KeyCode == Enum.KeyCode.S or input.KeyCode == Enum.KeyCode.Down then controlAxis += 1 end
+end)
+UserInputService.InputEnded:Connect(function(input, gpe)
     if gpe then return end
-    if input.KeyCode == Enum.KeyCode.W or input.KeyCode == Enum.KeyCode.Up then
-        controlAxis = controlAxis + 1
-    elseif input.KeyCode == Enum.KeyCode.S or input.KeyCode == Enum.KeyCode.Down then
-        controlAxis = controlAxis - 1
-    end
-end
-UserInputService.InputBegan:Connect(onInputBegan)
-UserInputService.InputEnded:Connect(onInputEnded)
-
--- Gamepad thumbstick (left stick)
-UserInputService.InputChanged:Connect(function(input, gpe)
-    if input.UserInputType == Enum.UserInputType.Gamepad1 or input.UserInputType == Enum.UserInputType.Gamepad2 then
-        if input.KeyCode == Enum.KeyCode.Thumbstick1 then
-            local y = input.Position.Y
-            controlAxis = y
-        end
+    if input.KeyCode == Enum.KeyCode.W or input.KeyCode == Enum.KeyCode.Up   then controlAxis += 1 end
+    if input.KeyCode == Enum.KeyCode.S or input.KeyCode == Enum.KeyCode.Down then controlAxis -= 1 end
+end)
+UserInputService.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.Gamepad1 and input.KeyCode == Enum.KeyCode.Thumbstick1 then
+        controlAxis = input.Position.Y
     end
 end)
-UserInputService.GamepadDisconnected:Connect(function()
-    controlAxis = 0
-end)
+UserInputService.GamepadDisconnected:Connect(function() controlAxis = 0 end)
 
--- On-screen buttons handlers
-local function setButtonAxis(val) buttonAxis = val end
-local function clearButtonAxis() buttonAxis = nil end
-
-local function connectHold(btn, axisVal)
-    btn.InputBegan:Connect(function(input)
-        if not alive then return end
-        if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
-            setButtonAxis(axisVal)
+local function connectHold(btn, val)
+    btn.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.Touch or i.UserInputType == Enum.UserInputType.MouseButton1 then
+            buttonAxis = val
         end
     end)
-    btn.InputEnded:Connect(function(input)
-        if not alive then return end
-        if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
-            clearButtonAxis()
+    btn.InputEnded:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.Touch or i.UserInputType == Enum.UserInputType.MouseButton1 then
+            buttonAxis = nil
         end
     end)
-    btn.MouseLeave:Connect(function() clearButtonAxis() end)
+    btn.MouseLeave:Connect(function() buttonAxis = nil end)
 end
-
 connectHold(upBtn, -1)
 connectHold(downBtn, 1)
 
--- Ping visual: transient label with 50% opacity initially, then fade
-local function showPing(text, atPosition)
+-- ──────────────────────────────────────────────
+-- VISUALS
+-- ──────────────────────────────────────────────
+local function showPing(text, pos)
     if not alive then return end
     local s = Instance.new("TextLabel", playFrame)
     s.Size = UDim2.new(0, 140, 0, 36)
     s.AnchorPoint = Vector2.new(0.5, 0.5)
-    local p = atPosition or (getAreaSize() / 2)
-    local x = p.X / getAreaSize().X
-    local y = p.Y / getAreaSize().Y
+    local sz = getAreaSize()
+    local x, y = pos.X/sz.X, pos.Y/sz.Y
     s.Position = UDim2.new(x, 0, y, 0)
     s.BackgroundTransparency = 0.5
     s.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
-    s.TextColor3 = Color3.new(1,1,1)
+    s.TextColor3 = Color3.new(1, 1, 1)
     s.Font = Enum.Font.SourceSansSemibold
     s.TextScaled = true
-    s.Text = text or "Ping!"
+    s.Text = text
     s.BorderSizePixel = 0
     s.ZIndex = 10
-    s.TextTransparency = 0.5 -- 50% opacity (semi-transparent text)
-
-    spawn(function()
-        local total = 0.6
-        local dt = 0
-        while dt < total and s and s.Parent and alive do
-            local step = RunService.RenderStepped:Wait()
-            dt = dt + step
-            s.Position = UDim2.new(x, 0, y, -18 * (dt / total))
-            local t = math.clamp(dt / total, 0, 1)
-            s.TextTransparency = 0.5 + 0.5 * t
-            s.BackgroundTransparency = 0.5 + 0.5 * t
+    s.TextTransparency = 0.5
+    task.spawn(function()
+        local total, elapsed = 0.6, 0
+        while elapsed < total and s and s.Parent and alive do
+            local dt = RunService.RenderStepped:Wait()
+            elapsed += dt
+            local t = math.clamp(elapsed/total, 0, 1)
+            s.Position = UDim2.new(x, 0, y, -18*t)
+            s.TextTransparency = 0.5 + 0.5*t
+            s.BackgroundTransparency = 0.5 + 0.5*t
         end
         if s and s.Parent then pcall(function() s:Destroy() end) end
     end)
 end
 
--- Boost state
-local activeBoosts = {
-    left = {mult = 1, endsAt = 0},
-    right = {mult = 1, endsAt = 0},
-}
-
-local function applyBoost(side, boostType)
+-- ──────────────────────────────────────────────
+-- BOOSTS
+-- ──────────────────────────────────────────────
+local function applyBoost(side, btype)
     if side ~= "left" and side ~= "right" then return end
-    local info = BOOSTS[boostType]
+    local info = BOOSTS[btype]
     if not info then return end
-    local now = tick()
     activeBoosts[side].mult = info.mult
-    activeBoosts[side].endsAt = now + BOOST_DURATION
-
-    -- Visual indicator near paddle
-    local label = Instance.new("TextLabel", playFrame)
-    label.Name = side .. "_BoostLabel"
-    label.Size = UDim2.new(0, 140, 0, 26)
-    if side == "left" then
-        label.Position = UDim2.new(0, 110, 0, 8)
-    else
-        label.Position = UDim2.new(1, -250, 0, 8)
-    end
-    label.BackgroundTransparency = 0.2
-    label.BackgroundColor3 = info.color
-    label.TextColor3 = Color3.new(1,1,1)
-    label.Font = Enum.Font.SourceSansSemibold
-    label.TextScaled = true
-    label.Text = info.text
-    local lblCorner = Instance.new("UICorner", label); lblCorner.CornerRadius = UDim.new(0,6)
-
-    spawn(function()
-        local remaining = activeBoosts[side].endsAt - tick()
-        while remaining > 0 and alive do
-            wait(0.2)
-            remaining = activeBoosts[side].endsAt - tick()
-        end
-        if label and label.Parent then pcall(function() label:Destroy() end) end
+    activeBoosts[side].endsAt = tick() + BOOST_DURATION
+    local lbl = Instance.new("TextLabel", playFrame)
+    lbl.Name = side .. "_BoostLabel"
+    lbl.Size = UDim2.new(0, 140, 0, 26)
+    lbl.Position = side == "left" and UDim2.new(0, 110, 0, 8) or UDim2.new(1, -250, 0, 8)
+    lbl.BackgroundTransparency = 0.2
+    lbl.BackgroundColor3 = info.color
+    lbl.TextColor3 = Color3.new(1, 1, 1)
+    lbl.Font = Enum.Font.SourceSansSemibold
+    lbl.TextScaled = true
+    lbl.Text = info.text
+    Instance.new("UICorner", lbl).CornerRadius = UDim.new(0, 6)
+    task.spawn(function()
+        while activeBoosts[side].endsAt - tick() > 0 and alive do task.wait(0.2) end
+        if lbl and lbl.Parent then pcall(function() lbl:Destroy() end) end
     end)
 end
 
 local function updateBoosts()
     local now = tick()
-    for side,st in pairs(activeBoosts) do
+    for side, st in pairs(activeBoosts) do
         if st.endsAt > 0 and now >= st.endsAt then
-            st.mult = 1
-            st.endsAt = 0
-            local name = side .. "_BoostLabel"
-            local existing = playFrame:FindFirstChild(name)
-            if existing then pcall(function() existing:Destroy() end) end
+            st.mult = 1; st.endsAt = 0
+            local e = playFrame:FindFirstChild(side .. "_BoostLabel")
+            if e then pcall(function() e:Destroy() end) end
         end
     end
 end
 
--- ------ SHOP LOGIC ------
-
-local shopActiveEffects = {} -- track active temporary shop effects, to revert cleanly
--- structure: { id = { endsAt = time, revert = fn } }
-
-local function canAfford(cost)
-    return leftScoreVal >= cost
-end
+-- ──────────────────────────────────────────────
+-- SHOP
+-- ──────────────────────────────────────────────
+local function canAfford(cost) return leftScoreVal >= cost end
 
 local function spendPoints(cost)
     leftScoreVal = math.max(0, leftScoreVal - cost)
     leftScore.Text = tostring(leftScoreVal)
+    shopTitle.Text = "🛒 Shop  (your pts: " .. leftScoreVal .. ")"
 end
 
-local function flashShopMessage(text, color)
-    color = color or Color3.fromRGB(200,200,200)
+local function flashMsg(text, color)
     local msg = Instance.new("TextLabel", shopPanel)
     msg.Size = UDim2.new(1, -12, 0, 22)
     msg.Position = UDim2.new(0, 6, 1, -28)
     msg.BackgroundTransparency = 0.4
-    msg.BackgroundColor3 = Color3.fromRGB(30,30,36)
-    msg.TextColor3 = color
+    msg.BackgroundColor3 = Color3.fromRGB(30, 30, 36)
+    msg.TextColor3 = color or Color3.fromRGB(200, 200, 200)
     msg.Font = Enum.Font.SourceSansSemibold
     msg.TextScaled = true
     msg.Text = text
-    local c = Instance.new("UICorner", msg); c.CornerRadius = UDim.new(0,6)
-    spawn(function()
-        wait(1.6)
+    msg.ZIndex = 22
+    Instance.new("UICorner", msg).CornerRadius = UDim.new(0, 6)
+    task.spawn(function()
+        task.wait(1.8)
         if msg and msg.Parent then pcall(function() msg:Destroy() end) end
     end)
 end
 
--- Apply a shop item (only player can buy; effects mostly affect player or opponent)
-local function applyShopItem(item)
-    if not item then return end
-    if not canAfford(item.cost) then
-        flashShopMessage("Not enough points!", Color3.fromRGB(255,120,120))
-        return
-    end
+local function addEffect(id, duration, revertFn)
+    table.insert(shopActiveEffects, { id = id, endsAt = tick() + duration, revert = revertFn })
+end
 
+local function applyShopItem(item)
+    if not canAfford(item.cost) then
+        flashMsg("Not enough points!", Color3.fromRGB(255, 120, 120)); return
+    end
     spendPoints(item.cost)
 
-    local now = tick()
     if item.id == "SlowBall" then
-        -- multiply ballGlobalMultiplier
         local m = item.mult
-        ballGlobalMultiplier = ballGlobalMultiplier * m
-        -- schedule revert
-        table.insert(shopActiveEffects, { id = item.id, endsAt = now + item.duration, revert = function()
-            ballGlobalMultiplier = ballGlobalMultiplier / m
-        end })
-        flashShopMessage("Slow Ball bought!", Color3.fromRGB(120,200,255))
+        ballGlobalMultiplier *= m
+        addEffect(item.id, item.duration, function() ballGlobalMultiplier /= m end)
+        flashMsg("Slow Ball active!", Color3.fromRGB(120, 200, 255))
+
     elseif item.id == "EnlargePaddle" then
-        local scale = item.scale
-        -- apply to left paddle height
-        local prev = currentPaddleHeights.left
-        local newH = math.floor(prev * scale)
+        local newH = math.floor(currentPaddleHeights.left * item.scale)
         currentPaddleHeights.left = newH
         leftPaddle.Size = UDim2.new(0, PADDLE_W, 0, newH)
-        -- clamp position to keep paddle in bounds
-        setPaddleYPixels(leftPaddle, math.clamp(getPaddleYPixels(leftPaddle), 0, getAreaSize().Y - newH))
-
-        table.insert(shopActiveEffects, { id = item.id, endsAt = now + item.duration, revert = function()
+        setPaddleY(leftPaddle, getPaddleY(leftPaddle))
+        addEffect(item.id, item.duration, function()
             currentPaddleHeights.left = PADDLE_H
             leftPaddle.Size = UDim2.new(0, PADDLE_W, 0, PADDLE_H)
-            setPaddleYPixels(leftPaddle, math.clamp(getPaddleYPixels(leftPaddle), 0, getAreaSize().Y - PADDLE_H))
-        end })
-        flashShopMessage("Paddle enlarged!", Color3.fromRGB(160,230,140))
+        end)
+        flashMsg("Paddle enlarged!", Color3.fromRGB(160, 230, 140))
+
     elseif item.id == "ShrinkOpponent" then
-        local scale = item.scale
-        local prev = currentPaddleHeights.right
-        local newH = math.max(28, math.floor(prev * scale))
+        local newH = math.max(28, math.floor(currentPaddleHeights.right * item.scale))
         currentPaddleHeights.right = newH
         rightPaddle.Size = UDim2.new(0, PADDLE_W, 0, newH)
-        setPaddleYPixels(rightPaddle, math.clamp(getPaddleYPixels(rightPaddle), 0, getAreaSize().Y - newH))
-
-        table.insert(shopActiveEffects, { id = item.id, endsAt = now + item.duration, revert = function()
+        setPaddleY(rightPaddle, getPaddleY(rightPaddle))
+        addEffect(item.id, item.duration, function()
             currentPaddleHeights.right = PADDLE_H
             rightPaddle.Size = UDim2.new(0, PADDLE_W, 0, PADDLE_H)
-            setPaddleYPixels(rightPaddle, math.clamp(getPaddleYPixels(rightPaddle), 0, getAreaSize().Y - PADDLE_H))
-        end })
-        flashShopMessage("Opponent shrunk!", Color3.fromRGB(255,170,120))
+        end)
+        flashMsg("Opponent shrunk!", Color3.fromRGB(255, 170, 120))
+
+    elseif item.id == "DoublePoints" then
+        doublePointsActive = true
+        addEffect(item.id, item.duration, function() doublePointsActive = false end)
+        flashMsg("Double Points active!", Color3.fromRGB(255, 215, 0))
+
+    elseif item.id == "ReverseControls" then
+        reverseControlsActive = true
+        addEffect(item.id, item.duration, function() reverseControlsActive = false end)
+        flashMsg("Bot reversed!", Color3.fromRGB(255, 120, 220))
+
+    elseif item.id == "GhostBall" then
+        ghostBallActive = true
+        ball.BackgroundTransparency = 0.55
+        ball.BackgroundColor3 = Color3.fromRGB(200, 240, 255)
+        addEffect(item.id, item.duration, function()
+            ghostBallActive = false
+            ball.BackgroundTransparency = 0
+            ball.BackgroundColor3 = Color3.fromRGB(255, 200, 50)
+        end)
+        flashMsg("Ghost Ball active!", Color3.fromRGB(180, 240, 255))
+
+    elseif item.id == "TurboBall" then
+        local m = 1.5
+        ballGlobalMultiplier *= m
+        addEffect(item.id, item.duration, function() ballGlobalMultiplier /= m end)
+        flashMsg("Turbo Ball active!", Color3.fromRGB(255, 160, 50))
+
+    elseif item.id == "Shield" then
+        shieldActive = true
+        flashMsg("Shield ready!", Color3.fromRGB(100, 220, 255))
     end
 end
 
--- shop active effects updater (reverts when time done)
 local function updateShopEffects()
     local now = tick()
     for i = #shopActiveEffects, 1, -1 do
         local e = shopActiveEffects[i]
         if now >= e.endsAt then
-            if e.revert then
-                pcall(e.revert)
-            end
+            pcall(e.revert)
             table.remove(shopActiveEffects, i)
         end
     end
 end
 
--- Build shop UI entries
 local function buildShopUI()
-    for i, item in ipairs(SHOP_YIELD) do
-        local yoff = 36 + (i-1) * 34
+    -- Items 1-4: left column, stacked below title
+    -- Items 5-6: right column
+    local leftItems  = { SHOP_YIELD[1], SHOP_YIELD[2], SHOP_YIELD[3], SHOP_YIELD[4] }
+    local rightItems = { SHOP_YIELD[5], SHOP_YIELD[6], SHOP_YIELD[7], SHOP_YIELD[8] }
+
+    local function makeRow(item, xScale, xOffset, rowW, yoff)
         local row = Instance.new("Frame", shopPanel)
-        row.Size = UDim2.new(1, -12, 0, 30)
-        row.Position = UDim2.new(0, 6, 0, yoff)
+        row.Size = UDim2.new(0, rowW, 0, 30)
+        row.Position = UDim2.new(xScale, xOffset, 0, yoff)
         row.BackgroundTransparency = 1
+        row.ZIndex = 21
 
-        local name = Instance.new("TextLabel", row)
-        name.Size = UDim2.new(0.6, 0, 1, 0)
-        name.Position = UDim2.new(0, 0, 0, 0)
-        name.BackgroundTransparency = 1
-        name.Font = Enum.Font.SourceSansSemibold
-        name.TextColor3 = Color3.fromRGB(220,220,220)
-        name.TextScaled = true
-        name.Text = item.name
+        local nameLbl = Instance.new("TextLabel", row)
+        nameLbl.Size = UDim2.new(0.55, 0, 1, 0)
+        nameLbl.BackgroundTransparency = 1
+        nameLbl.Font = Enum.Font.SourceSansSemibold
+        nameLbl.TextColor3 = Color3.fromRGB(220, 220, 220)
+        nameLbl.TextScaled = true
+        nameLbl.Text = item.name
+        nameLbl.ZIndex = 22
 
-        local cost = Instance.new("TextLabel", row)
-        cost.Size = UDim2.new(0.2, 0, 1, 0)
-        cost.Position = UDim2.new(0.6, 4, 0, 0)
-        cost.BackgroundTransparency = 1
-        cost.Font = Enum.Font.SourceSans
-        cost.TextColor3 = Color3.fromRGB(200,200,200)
-        cost.TextScaled = true
-        cost.Text = tostring(item.cost)
+        local costLbl = Instance.new("TextLabel", row)
+        costLbl.Size = UDim2.new(0.18, 0, 1, 0)
+        costLbl.Position = UDim2.new(0.55, 2, 0, 0)
+        costLbl.BackgroundTransparency = 1
+        costLbl.Font = Enum.Font.SourceSans
+        costLbl.TextColor3 = Color3.fromRGB(255, 215, 80)
+        costLbl.TextScaled = true
+        costLbl.Text = tostring(item.cost) .. "pt"
+        costLbl.ZIndex = 22
 
-        local btn = Instance.new("TextButton", row)
-        btn.Size = UDim2.new(0.2, -6, 1, 0)
-        btn.Position = UDim2.new(0.8, 4, 0, 0)
-        btn.Font = Enum.Font.SourceSansBold
-        btn.TextScaled = true
-        btn.Text = "Buy"
-        btn.BackgroundColor3 = Color3.fromRGB(50,120,220)
-        btn.TextColor3 = Color3.fromRGB(255,255,255)
-        btn.BorderSizePixel = 0
-        local bcorner = Instance.new("UICorner", btn); bcorner.CornerRadius = UDim.new(0,6)
+        local buyBtn = Instance.new("TextButton", row)
+        buyBtn.Size = UDim2.new(0.25, -4, 1, 0)
+        buyBtn.Position = UDim2.new(0.75, 2, 0, 0)
+        buyBtn.Font = Enum.Font.SourceSansBold
+        buyBtn.TextScaled = true
+        buyBtn.Text = "Buy"
+        buyBtn.BackgroundColor3 = Color3.fromRGB(50, 120, 220)
+        buyBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        buyBtn.BorderSizePixel = 0
+        buyBtn.ZIndex = 22
+        Instance.new("UICorner", buyBtn).CornerRadius = UDim.new(0, 6)
 
-        btn.MouseButton1Click:Connect(function()
-            if not alive then return end
-            applyShopItem(item)
+        buyBtn.MouseButton1Click:Connect(function()
+            if alive then applyShopItem(item) end
         end)
-
-        -- hover tooltip
-        btn.MouseEnter:Connect(function()
+        buyBtn.MouseEnter:Connect(function()
             local tip = shopPanel:FindFirstChild("Tip")
             if tip then pcall(function() tip:Destroy() end) end
-            local tipLbl = Instance.new("TextLabel", shopPanel)
-            tipLbl.Name = "Tip"
-            tipLbl.Size = UDim2.new(1, -12, 0, 22)
-            tipLbl.Position = UDim2.new(0, 6, 1, -6)
-            tipLbl.BackgroundTransparency = 0.5
-            tipLbl.BackgroundColor3 = Color3.fromRGB(28,28,34)
-            tipLbl.TextColor3 = Color3.fromRGB(220,220,220)
-            tipLbl.Font = Enum.Font.SourceSans
-            tipLbl.TextScaled = true
-            tipLbl.Text = item.desc
-            local tc = Instance.new("UICorner", tipLbl)
-            tc.CornerRadius = UDim.new(0,6)
+            local t = Instance.new("TextLabel", shopPanel)
+            t.Name = "Tip"
+            t.Size = UDim2.new(1, -12, 0, 20)
+            t.Position = UDim2.new(0, 6, 1, -24)
+            t.BackgroundTransparency = 0.4
+            t.BackgroundColor3 = Color3.fromRGB(28, 28, 34)
+            t.TextColor3 = Color3.fromRGB(210, 210, 210)
+            t.Font = Enum.Font.SourceSans
+            t.TextScaled = true
+            t.Text = item.desc
+            t.ZIndex = 23
+            Instance.new("UICorner", t).CornerRadius = UDim.new(0, 5)
         end)
-        btn.MouseLeave:Connect(function()
+        buyBtn.MouseLeave:Connect(function()
             local tip = shopPanel:FindFirstChild("Tip")
             if tip then pcall(function() tip:Destroy() end) end
         end)
     end
-end
 
+    -- Divider between columns
+    local divider = Instance.new("Frame", shopPanel)
+    divider.Size = UDim2.new(0, 1, 1, -10)
+    divider.Position = UDim2.new(0.5, 0, 0, 5)
+    divider.BackgroundColor3 = Color3.fromRGB(50, 52, 62)
+    divider.BorderSizePixel = 0
+    divider.ZIndex = 21
+
+    -- Right column header
+    local rightHeader = Instance.new("TextLabel", shopPanel)
+    rightHeader.Size = UDim2.new(0.5, -10, 0, 20)
+    rightHeader.Position = UDim2.new(0.5, 6, 0, 8)
+    rightHeader.BackgroundTransparency = 1
+    rightHeader.Font = Enum.Font.SourceSansBold
+    rightHeader.TextColor3 = Color3.fromRGB(160, 160, 180)
+    rightHeader.TextScaled = true
+    rightHeader.Text = "Special"
+    rightHeader.ZIndex = 22
+
+    -- Left column: items 1-4
+    for i, item in ipairs(leftItems) do
+        local yoff = 36 + (i-1) * 34
+        makeRow(item, 0, 6, 200, yoff)
+    end
+
+    -- Right column: items 5-6
+    for i, item in ipairs(rightItems) do
+        local yoff = 36 + (i-1) * 34
+        makeRow(item, 0.5, 6, 200, yoff)
+    end
+end
 buildShopUI()
 
--- ------ END SHOP LOGIC ------
-
--- Reset ball
-local function resetBall(direction)
-    local size = getAreaSize()
-    ballPos = Vector2.new(size.X/2, size.Y/2)
-    local vy = (math.random() * 2 - 1) * 0.35
-    local vx = direction or (math.random() > 0.5 and 1 or -1)
-    ballVel = Vector2.new(vx, vy).unit
+-- ──────────────────────────────────────────────
+-- BALL RESET
+-- ──────────────────────────────────────────────
+local function resetBall(dir)
+    local s = getAreaSize()
+    ballPos = Vector2.new(s.X/2, s.Y/2)
+    local vy = (math.random()*2 - 1) * 0.35
+    local vx = dir or (math.random() > 0.5 and 1 or -1)
+    ballVel = Vector2.new(vx, vy).Unit
     ballSpeed = BALL_INITIAL_SPEED
-    setBallPositionPixels(ballPos)
+    setBallPos(ballPos)
 end
-
--- Start moving toward player
 resetBall(-1)
 
--- Track who last hit the ball ("left" or "right")
-local lastHit = "left"
-
--- Booster management
-local boosters = {} -- array of {frame, type, posPixels, createdAt}
-
+-- ──────────────────────────────────────────────
+-- BOOSTERS
+-- ──────────────────────────────────────────────
 local function createBooster()
     if not alive then return end
-    local size = getAreaSize()
+    local s = getAreaSize()
     local margin = 80
-    if size.X < margin*2 then margin = 20 end
-    local x = math.random(margin, math.max(margin+1, size.X - margin))
-    local y = math.random(40, math.max(41, size.Y - 40))
+    local x = math.random(margin, math.max(margin+1, s.X-margin))
+    local y = math.random(40, math.max(41, s.Y-40))
     local pos = Vector2.new(x, y)
-
-    local btype = (math.random() < 0.5) and "SpeedUp" or "SlowDown"
-
+    local btype = math.random() < 0.5 and "SpeedUp" or "SlowDown"
     local frame = Instance.new("Frame", playFrame)
-    frame.Name = "Booster"
     frame.Size = UDim2.new(0, BOOST_RADIUS*2, 0, BOOST_RADIUS*2)
     frame.AnchorPoint = Vector2.new(0.5, 0.5)
-    frame.Position = UDim2.new(pos.X / size.X, 0, pos.Y / size.Y, 0)
+    frame.Position = UDim2.new(pos.X/s.X, 0, pos.Y/s.Y, 0)
     frame.BackgroundColor3 = BOOSTS[btype].color
     frame.BorderSizePixel = 0
-    local corner = Instance.new("UICorner", frame); corner.CornerRadius = UDim.new(1, 0)
-    local pulse = Instance.new("UIStroke", frame); pulse.Color = Color3.fromRGB(255,255,255); pulse.Transparency = 0.75; pulse.Thickness = 1
-
-    local createdAt = tick()
-    table.insert(boosters, {frame = frame, type = btype, pos = pos, createdAt = createdAt})
-    -- auto-despawn
-    spawn(function()
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(1, 0)
+    local pulse = Instance.new("UIStroke", frame)
+    pulse.Color = Color3.fromRGB(255,255,255); pulse.Transparency = 0.75; pulse.Thickness = 1
+    table.insert(boosters, { frame = frame, type = btype, pos = pos })
+    task.spawn(function()
         local t0 = tick()
-        while alive and tick() - t0 < BOOST_LIFETIME do
-            wait(0.5)
-        end
-        for i=#boosters,1,-1 do
+        while alive and tick()-t0 < BOOST_LIFETIME do task.wait(0.5) end
+        for i = #boosters, 1, -1 do
             if boosters[i].frame == frame then
                 if frame and frame.Parent then pcall(function() frame:Destroy() end) end
                 table.remove(boosters, i)
@@ -654,135 +730,116 @@ local function createBooster()
     end)
 end
 
--- Booster spawner thread
-spawn(function()
+task.spawn(function()
     while alive do
         local t = math.random(BOOST_SPAWN_MIN, BOOST_SPAWN_MAX)
-        local waited = 0
-        while alive and waited < t do
-            wait(0.5)
-            waited = waited + 0.5
-        end
-        if not alive then break end
-        createBooster()
+        local w = 0
+        while alive and w < t do task.wait(0.5); w += 0.5 end
+        if alive then createBooster() end
     end
 end)
 
--- Utility: safe paddle rect pixels
-local function paddleRectPixels(paddle)
-    local px = paddle.AbsolutePosition.X - playFrame.AbsolutePosition.X
-    local py = getPaddleYPixels(paddle)
-    return px, py, paddle.AbsoluteSize.X, paddle.AbsoluteSize.Y
-end
-
--- Improved paddle hit reflection: uses hit point to compute a reliable outgoing direction
+-- ──────────────────────────────────────────────
+-- REFLECT
+-- ──────────────────────────────────────────────
 local function reflectFromPaddle(side, px, py, pw, ph)
-    local hitOffset = (ballPos.Y - (py + ph/2)) / (ph/2)
-    hitOffset = math.clamp(hitOffset, -1, 1)
-    local dirX = (side == "left") and 1 or -1
-    local dir = Vector2.new(dirX, hitOffset)
-    if math.abs(dir.X) < 0.5 then
-        dir = Vector2.new(0.5 * dirX, dir.Y)
-    end
-    return dir.unit
+    local hit = math.clamp((ballPos.Y - (py + ph/2)) / (ph/2), -1, 1)
+    local dirX = side == "left" and 1 or -1
+    local dir = Vector2.new(dirX, hit)
+    if math.abs(dir.X) < 0.5 then dir = Vector2.new(0.5*dirX, dir.Y) end
+    return dir.Unit
 end
 
--- AI state
+-- ──────────────────────────────────────────────
+-- GAME LOOP
+-- ──────────────────────────────────────────────
 local aiReactionTimer = 0
 local aiTargetY = nil
-
--- Game loop
 local lastTime = tick()
+
 local renderConn
 renderConn = RunService.RenderStepped:Connect(function()
-    if not alive then
-        if renderConn then renderConn:Disconnect() end
-        return
-    end
+    if not alive then renderConn:Disconnect() return end
 
     local now = tick()
     local dt = math.clamp(now - lastTime, 0, 0.05)
     lastTime = now
-
     areaSize = getAreaSize()
     updateBoosts()
     updateShopEffects()
 
-    -- Determine control axis: buttons override keyboard/gamepad
-    local finalAxis = (buttonAxis ~= nil) and buttonAxis or controlAxis
+    shopTitle.Text = "🛒 Shop  (your pts: " .. leftScoreVal .. ")"
 
-    -- Player paddle movement (vertical only)
-    local playerYPixels = getPaddleYPixels(leftPaddle)
-    local playerSpeed = PADDLE_BASE_SPEED * activeBoosts.left.mult
-    local moveY = finalAxis * playerSpeed * dt
-    playerYPixels = math.clamp(playerYPixels + moveY, 0, areaSize.Y - leftPaddle.AbsoluteSize.Y)
-    setPaddleYPixels(leftPaddle, playerYPixels)
+    -- Player movement
+    local axis = buttonAxis ~= nil and buttonAxis or controlAxis
+    local py = getPaddleY(leftPaddle)
+    py += axis * PADDLE_BASE_SPEED * activeBoosts.left.mult * dt
+    setPaddleY(leftPaddle, py)
 
-    -- AI paddle: follow ball Y with speed (affected by boost) but with reaction delay and deadzone
-    aiReactionTimer = aiReactionTimer - dt
+    -- AI movement
+    aiReactionTimer -= dt
     if aiReactionTimer <= 0 then
-        local jitter = (math.random() * 2 - 1) * AI_JITTER * currentPaddleHeights.right
-        aiTargetY = math.clamp(ballPos.Y - currentPaddleHeights.right/2 + jitter, 0, areaSize.Y - currentPaddleHeights.right)
-        aiReactionTimer = AI_REACTION_TIME + math.random() * (AI_REACTION_TIME * 0.8)
+        local jitter = (math.random()*2-1) * AI_JITTER * currentPaddleHeights.right
+        local targetCenter = ballPos.Y - currentPaddleHeights.right/2 + jitter
+        aiTargetY = math.clamp(targetCenter, 0, areaSize.Y - currentPaddleHeights.right)
+        aiReactionTimer = AI_REACTION_TIME + math.random() * AI_REACTION_TIME * 0.8
     end
 
-    local aiYPixels = getPaddleYPixels(rightPaddle)
-    local aiSpeed = AI_BASE_SPEED * activeBoosts.right.mult
+    local aiY = getPaddleY(rightPaddle)
     if aiTargetY then
-        local distance = aiTargetY - aiYPixels
-        if math.abs(distance) > AI_DEADZONE then
-            local aiMove = math.clamp(distance, -aiSpeed * dt, aiSpeed * dt)
-            aiYPixels = aiYPixels + aiMove
+        local dist = aiTargetY - aiY
+        if reverseControlsActive then dist = -dist end
+        if math.abs(dist) > AI_DEADZONE then
+            aiY += math.clamp(dist, -AI_BASE_SPEED*dt, AI_BASE_SPEED*dt)
         end
     end
-    setPaddleYPixels(rightPaddle, aiYPixels)
+    setPaddleY(rightPaddle, aiY)
 
-    -- Ball physics (apply global multiplier from shop)
+    -- Ball movement
     ballPos = ballPos + ballVel * ballSpeed * ballGlobalMultiplier * dt
-    local radius = BALL_SIZE/2
+    local r = BALL_SIZE/2
 
-    -- Top/bottom wall collision
-    if ballPos.Y - radius <= 0 then
-        ballPos = Vector2.new(ballPos.X, radius)
+    -- Wall collisions
+    if ballPos.Y - r <= 0 then
+        ballPos = Vector2.new(ballPos.X, r)
         ballVel = Vector2.new(ballVel.X, -ballVel.Y)
         pingSound:Play()
-        showPing("Ping!", Vector2.new(ballPos.X, ballPos.Y))
-    elseif ballPos.Y + radius >= areaSize.Y then
-        ballPos = Vector2.new(ballPos.X, areaSize.Y - radius)
+    elseif ballPos.Y + r >= areaSize.Y then
+        ballPos = Vector2.new(ballPos.X, areaSize.Y - r)
         ballVel = Vector2.new(ballVel.X, -ballVel.Y)
         pingSound:Play()
-        showPing("Ping!", Vector2.new(ballPos.X, ballPos.Y))
     end
 
-    -- Left paddle collision (improved)
+    -- Left paddle collision
     do
-        local px, py, pw, ph = paddleRectPixels(leftPaddle)
-        if ballPos.X - radius <= px + pw then
-            if ballPos.Y >= py and ballPos.Y <= py + ph then
-                ballPos = Vector2.new(px + pw + radius, ballPos.Y)
-                local newDir = reflectFromPaddle("left", px, py, pw, ph)
-                ballVel = newDir
-                ballSpeed = math.max(ballSpeed * BALL_SPEED_INCREASE, BALL_INITIAL_SPEED * 0.6)
-                pingSound:Play()
-                showPing("Ping!", Vector2.new(ballPos.X, ballPos.Y))
-                lastHit = "left"
-            end
+        local px, ppy, pw, ph = paddleRect(leftPaddle)
+        if ballPos.X - r <= px + pw and ballPos.X - r >= px and ballPos.Y >= ppy and ballPos.Y <= ppy + ph then
+            ballPos = Vector2.new(px + pw + r, ballPos.Y)
+            ballVel = reflectFromPaddle("left", px, ppy, pw, ph)
+            ballSpeed = math.max(ballSpeed * BALL_SPEED_INCREASE, BALL_INITIAL_SPEED * 0.6)
+            pingSound:Play()
+            showPing("Ping!", ballPos)
+            lastHit = "left"
+        end
+        -- Shield: if ball slips past left paddle, bounce it back once
+        if shieldActive and ballPos.X - r < px then
+            shieldActive = false
+            ballPos = Vector2.new(px + pw + r, ballPos.Y)
+            ballVel = Vector2.new(math.abs(ballVel.X), ballVel.Y)
+            showPing("🛡 Shield!", ballPos)
         end
     end
 
-    -- Right paddle collision (improved)
-    do
-        local px, py, pw, ph = paddleRectPixels(rightPaddle)
-        if ballPos.X + radius >= px then
-            if ballPos.Y >= py and ballPos.Y <= py + ph then
-                ballPos = Vector2.new(px - radius, ballPos.Y)
-                local newDir = reflectFromPaddle("right", px, py, pw, ph)
-                ballVel = newDir
-                ballSpeed = math.max(ballSpeed * BALL_SPEED_INCREASE, BALL_INITIAL_SPEED * 0.6)
-                pingSound:Play()
-                showPing("Ping!", Vector2.new(ballPos.X, ballPos.Y))
-                lastHit = "right"
-            end
+    -- Right paddle collision (skipped if ghost ball)
+    if not ghostBallActive then
+        local px, ppy, pw, ph = paddleRect(rightPaddle)
+        if ballPos.X + r >= px and ballPos.X + r <= px + pw + r and ballPos.Y >= ppy and ballPos.Y <= ppy + ph then
+            ballPos = Vector2.new(px - r, ballPos.Y)
+            ballVel = reflectFromPaddle("right", px, ppy, pw, ph)
+            ballSpeed = math.max(ballSpeed * BALL_SPEED_INCREASE, BALL_INITIAL_SPEED * 0.6)
+            pingSound:Play()
+            showPing("Ping!", ballPos)
+            lastHit = "right"
         end
     end
 
@@ -791,94 +848,51 @@ renderConn = RunService.RenderStepped:Connect(function()
         local b = boosters[i]
         if not b.frame or not b.frame.Parent then
             table.remove(boosters, i)
-        else
-            local posPixels = b.pos
-            local dist = (ballPos - posPixels).magnitude
-            if dist <= radius + BOOST_RADIUS then
-                applyBoost(lastHit, b.type)
-                showPing("Boost!", posPixels)
-                if b.frame and b.frame.Parent then pcall(function() b.frame:Destroy() end) end
-                table.remove(boosters, i)
-            else
-                local px, py, pw, ph = paddleRectPixels(leftPaddle)
-                local closestX = math.clamp(posPixels.X, px, px + pw)
-                local closestY = math.clamp(posPixels.Y, py, py + ph)
-                local d = (Vector2.new(closestX, closestY) - posPixels).magnitude
-                if d <= BOOST_RADIUS then
-                    applyBoost("left", b.type)
-                    showPing("Boost!", posPixels)
-                    if b.frame and b.frame.Parent then pcall(function() b.frame:Destroy() end) end
-                    table.remove(boosters, i)
-                else
-                    local px2, py2, pw2, ph2 = paddleRectPixels(rightPaddle)
-                    local closestX2 = math.clamp(posPixels.X, px2, px2 + pw2)
-                    local closestY2 = math.clamp(posPixels.Y, py2, py2 + ph2)
-                    local d2 = (Vector2.new(closestX2, closestY2) - posPixels).magnitude
-                    if d2 <= BOOST_RADIUS then
-                        applyBoost("right", b.type)
-                        showPing("Boost!", posPixels)
-                        if b.frame and b.frame.Parent then pcall(function() b.frame:Destroy() end) end
-                        table.remove(boosters, i)
-                    end
-                end
-            end
+        elseif (ballPos - b.pos).Magnitude <= r + BOOST_RADIUS then
+            applyBoost(lastHit, b.type)
+            showPing("Boost!", b.pos)
+            pcall(function() b.frame:Destroy() end)
+            table.remove(boosters, i)
         end
     end
 
-    -- Score check: ball out of left/right
-    if ballPos.X + radius < 0 then
-        -- right player scores
-        rightScoreVal = rightScoreVal + 1
+    -- Scoring with difficulty bonus
+    if ballPos.X + r < 0 then
+        rightScoreVal += 1
         rightScore.Text = tostring(rightScoreVal)
         resetBall(1)
-    elseif ballPos.X - radius > areaSize.X then
-        -- left player scores
-        leftScoreVal = leftScoreVal + 1
+    elseif ballPos.X - r > areaSize.X then
+        local diffBonus = currentDifficulty == "Easy" and 1 or currentDifficulty == "Medium" and 2 or 3
+        local pts = doublePointsActive and diffBonus * 2 or diffBonus
+        leftScoreVal += pts
         leftScore.Text = tostring(leftScoreVal)
+        showPing("+" .. pts .. "!", Vector2.new(areaSize.X/2, areaSize.Y/2))
         resetBall(-1)
     end
 
-    -- Visual update
-    setBallPositionPixels(ballPos)
+    setBallPos(ballPos)
 end)
 
--- Keep UI correctly centered & rescale on screen size change
-playFrame:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
-    if not alive then return end
-    local size = getAreaSize()
-    setPaddleYPixels(leftPaddle, math.clamp(getPaddleYPixels(leftPaddle), 0, size.Y - leftPaddle.AbsoluteSize.Y))
-    setPaddleYPixels(rightPaddle, math.clamp(getPaddleYPixels(rightPaddle), 0, size.Y - rightPaddle.AbsoluteSize.Y))
-    setBallPositionPixels(ballPos)
-    closeBtn.Position = UDim2.new(0.5, PLAY_AREA_SIZE.X/2, 0.5, -PLAY_AREA_SIZE.Y/2)
-    shopToggle.Position = UDim2.new(0.5, PLAY_AREA_SIZE.X/2 - 44, 0.5, -PLAY_AREA_SIZE.Y/2)
-end)
-
--- Instruction label
-local info = Instance.new("TextLabel", playFrame)
-info.Size = UDim2.new(0, 340, 0, 22)
-info.Position = UDim2.new(0.5, 0, 1, -30)
-info.AnchorPoint = Vector2.new(0.5, 0)
-info.BackgroundTransparency = 1
-info.TextColor3 = Color3.fromRGB(200,200,200)
-info.Font = Enum.Font.SourceSans
-info.TextScaled = true
-info.Text = "Use joystick vertical or Up/Down keys, or on-screen buttons. Boosters & shop available."
-
--- Close button behavior: clean shutdown
+-- ──────────────────────────────────────────────
+-- BUTTON EVENTS
+-- ──────────────────────────────────────────────
 closeBtn.MouseButton1Click:Connect(function()
     if not alive then return end
     alive = false
-    if renderConn then pcall(function() renderConn:Disconnect() end) end
+    pcall(function() renderConn:Disconnect() end)
     pcall(function() screenGui:Destroy() end)
 end)
 
--- Shop toggle
 shopToggle.MouseButton1Click:Connect(function()
-    if not alive then return end
-    shopPanel.Visible = not shopPanel.Visible
+    if alive then shopPanel.Visible = not shopPanel.Visible end
 end)
 
--- Clean up when script ends
-game:BindToClose(function()
-    alive = false
+playFrame:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+    if not alive then return end
+    local s = getAreaSize()
+    setPaddleY(leftPaddle,  math.clamp(getPaddleY(leftPaddle),  0, s.Y - leftPaddle.AbsoluteSize.Y))
+    setPaddleY(rightPaddle, math.clamp(getPaddleY(rightPaddle), 0, s.Y - rightPaddle.AbsoluteSize.Y))
+    setBallPos(ballPos)
 end)
+
+game:BindToClose(function() alive = false end)
